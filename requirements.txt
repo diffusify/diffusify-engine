@@ -1,0 +1,8 @@
+torch==2.5.1
+accelerate==1.2.1
+diffusers==0.32.0
+transformers==4.47.1
+ffmpeg-python
+tqdm
+safetensors
+spandrel
