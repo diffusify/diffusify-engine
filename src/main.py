@@ -6,6 +6,10 @@ import torch
 from .diffusify_engine.transformation_manager import TransformationManager
 from .diffusify_engine.generative.generative_pipeline import GenerativePipeline
 
+# example cmd arguments
+# python -m src.main --mode transformation -i input.mp4 -o output.mp4
+# python -m src.main --mode generative -p "a beautiful sunset"
+
 def main():
     parser = argparse.ArgumentParser(description="Video processing and AI frame generation tool")
     parser.add_argument("--mode", 
