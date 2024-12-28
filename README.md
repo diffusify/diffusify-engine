@@ -110,9 +110,9 @@ diffusify-engine/
 │   │   │   ├── processors/                 # Implementations of different image processing transforms and generative models
 │   │   │   │   ├── generative/             # Generative model implementations
 │   │   │   │   │   └── diffusion/          # Diffusion model implementations
-│   │   │   │   │       ├── hunyuan/        # Hunyuan video model implementation
-│   │   │   │   │       ├── mochi/          # Hunyuan video model implementation
-│   │   │   │   │       └── ltx/            # Hunyuan video model implementation
+│   │   │   │   │       ├── hunyuan/
+│   │   │   │   │       ├── mochi/
+│   │   │   │   │       └── ltx/
 │   │   │   │   └── transformative/         # Transformative model implementations
 │   │   │   │       ├── base.py             # Abstract base class for all processors.
 │   │   │   │       ├── spandrel.py         # Implements a processor using the Spandrel model library.
