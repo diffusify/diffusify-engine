@@ -4,7 +4,7 @@ import argparse
 import torch
 
 from .diffusify_engine.transformation_manager import TransformationManager
-from .diffusify_engine.generative.generative_pipeline import GenerativePipeline
+from .diffusify_engine.pipelines.generative_pipeline import GenerativePipeline
 
 # example cmd arguments
 # python -m src.main --mode transformation -i input.mp4 -o output.mp4

@@ -87,10 +87,10 @@ def fp8_linear_forward(cls, original_dtype, input):
     else:
         return cls.original_forward(input)
 
-def convert_fp8_linear(module, original_dtype):
+def convert_fp8_linear(module, original_dtype, fp8_map_path):
     setattr(module, "fp8_matmul_enabled", True)
     script_directory = os.path.dirname(os.path.abspath(__file__))
-    fp8_map_path = os.path.join(script_directory,"models/hunyuan/config/fp8_map.safetensors")
+    fp8_map_path = os.path.join(script_directory, fp8_map_path)
     if os.path.exists(fp8_map_path):
         fp8_map = load_torch_file(fp8_map_path, safe_load=True)
     else:

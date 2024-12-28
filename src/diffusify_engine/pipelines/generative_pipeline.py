@@ -28,11 +28,13 @@ from .processors.generative.diffusion.hunyuan.modules.posemb_layers import get_n
 from .processors.generative.diffusion.hunyuan.helpers import align_to
 from .utils import convert_fp8_linear, load_torch_file, soft_empty_cache
 
-# Configuration
 MODEL_PATH = "/home/ubuntu/share/comfyui/models/diffusion_models/hunyuan-video-720-fp8.pt"
+MODEL_MAP_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/fp8_map.safetensors"
+
 VAE_PATH = "/home/ubuntu/share/comfyui/models/vae/hunyuan-video-vae-bf16.safetensors"
 LLM_PATH = "/home/ubuntu/share/comfyui/models/llm/llava-llama-3-8b-text-encoder-tokenizer"
 CLIP_PATH = "/home/ubuntu/share/comfyui/models/clip/clip-vit-large-patch14"
+
 PROMPT = "a warmly lit café at night, with hanging spherical Edison bulbs casting a soft glow over polished wooden tables and velvet booths, large floor-to-ceiling windows reveal a rainy European street outside where raindrops streak the glass and blurred headlights of passing cars create a dreamy ambiance, the camera zooms slowly on a steaming cup of coffee, next to flickering candles, and pastries."
 NEGATIVE_PROMPT = None
 INPUT_FRAMES_PATH = "/home/ubuntu/share/tests-frames"
@@ -48,9 +50,11 @@ EMBEDDED_GUIDANCE_SCALE = 5.0
 FLOW_SHIFT = 5.0
 SEED = 348273
 DENOISE_STRENGTH = 1.0
+
 BASE_DTYPE = torch.bfloat16
 QUANT_DTYPE = torch.float8_e4m3fn
 PARAMS_TO_KEEP = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
+
 SWAP_DOUBLE_BLOCKS = 4
 SWAP_SINGLE_BLOCKS = 0
 OFFLOAD_TXT_IN = False
@@ -148,7 +152,7 @@ def load_vae(vae_path, device, offload_device, precision):
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
 
         script_directory = os.path.dirname(os.path.abspath(__file__))
-        vae_config = os.path.join(script_directory, "models/hunyuan/config/hy_vae_config.json")
+        vae_config = os.path.join(script_directory, "generative/diffusion/hunyuan/config/hy_vae_config.json")
 
         # Load VAE configuration
         with open(vae_config, 'r') as f:
@@ -500,7 +504,7 @@ def load_model(model_path, device, offload_device, base_dtype):
         set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
 
     # convert scaled
-    convert_fp8_linear(transformer, base_dtype)
+    convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
 
     pipeline = HunyuanVideoPipeline(
         transformer=transformer,

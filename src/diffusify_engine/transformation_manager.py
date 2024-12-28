@@ -11,9 +11,9 @@ import ffmpeg
 
 from typing import Optional, Dict, List, Any
 
-from .transformation.gpu_pool import GPUWorkerPool, WorkerResult
-from .transformation.transformation_pipeline import TransformationPipeline
-from .transformation.processors.spandrel import SpandrelProcessor
+from .pipelines.gpu_pool import GPUWorkerPool, WorkerResult
+from .pipelines.transformation_pipeline import TransformationPipeline
+from .pipelines.processors.transformative.spandrel import SpandrelProcessor
 from .utils import parse_gpu_devices, timed_execution, format_stats_output
 
 class TransformationManager:
