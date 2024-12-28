@@ -1,9 +1,4 @@
 # Diffusify Engine
-**_Create and Enhance Videos with AI_**
-
-Diffusify Engine is a powerful, GPU-accelerated system designed to process and create videos using the latest AI models. It leverages the power of multiple GPUs to deliver high performance and speed.
-
-### What is Diffusify Engine?
 
 Diffusify Engine is a modular video processing and generation framework built around the concept of customizable pipelines. These pipelines are composed of individual processing units, referred to as "processors," each designed to execute a specific operation on video data.
 
