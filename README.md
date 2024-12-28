@@ -18,6 +18,10 @@ Processors can encapsulate a variety of functionalities, including generative fr
 - **Extensible Framework**: Easily add new processors by inheriting from base classes.
 - **Text-to-Video Frame Generation**: Generate video frames from text prompts using configurable generative models.
 
+## Backend for Diffusify Studio
+
+Diffusify Engine serves as the powerful backend for **Diffusify Studio**, a user-friendly application that provides a graphical interface to access and utilize the engine's capabilities. Diffusify Studio simplifies the creation and enhancement of videos by allowing users to easily configure pipelines, manage settings, and interact with the underlying AI models without needing to write code.
+
 ## Table of Contents
 
 - [Requirements](#requirements)
