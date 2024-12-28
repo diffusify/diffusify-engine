@@ -98,28 +98,38 @@ The Spandrel library is required for certain processors like `SpandrelProcessor`
 ```
 diffusify-engine/
 ├── src/
-│   ├── main.py                             # Command-line interface entry point (for testing/dev).
+│   ├── main.py                             # Command-line interface entry point.
 │   ├── api/                                # Web API layer (Placeholder - not implemented in provided code)
 │   │   ├── app.py                          # Flask/FastAPI application setup.
 │   │   └── routes/                         # API endpoint definitions.
 │   ├── diffusify_engine/                   # Core logic of the application
-│   │   ├── generative/                     # Experimental text-to-video, image-to-video, video-to-video support (wip)
-│   │   ├── transformation_manager.py       # Manages the video transformation workflow.
-│   │   ├── transformation/                 # Contains transformation-related classes
-│   │   │   ├── gpu_pool.py                 # Manages GPU workers for transformations.
+│   │   ├── pipelines/                      # Contains transformation and generative-related classes
+│   │   │   ├── generative_pipeline.py      # Defines the pipeline for generative models.
+│   │   │   ├── gpu_pool.py                 # Manages GPU workers for processing.
 │   │   │   ├── transformation_pipeline.py  # Defines the processing pipeline for transformations.
-│   │   │   └── processors/                 # Implementations of different image processing transforms
-│   │   │       ├── spandrel.py             # Implements a processor using the Spandrel model library.
-│   │   │       └── base.py                 # Abstract base class for all processors.
-│   │   ├── utils/                          # Utility functions
-│   │   │   ├── tensor_processor.py         # Implements tensor processing functions like tiled scaling and gaussian blur.
-│   │   │   ├── timing.py                   # Provides timing utilities for measuring execution time.
-│   │   │   ├── stats.py                    # Formats processing statistics into a human-readable string.
-│   │   │   └── gpu.py                      # Provides GPU related utility functions.
+│   │   │   ├── processors/                 # Implementations of different image processing transforms and generative models
+│   │   │   │   ├── generative/             # Generative model implementations
+│   │   │   │   │   └── diffusion/          # Diffusion model implementations
+│   │   │   │   │       ├── hunyuan/        # Hunyuan video model implementation
+│   │   │   │   │       ├── mochi/          # Hunyuan video model implementation
+│   │   │   │   │       └── ltx/            # Hunyuan video model implementation
+│   │   │   │   └── transformative/         # Transformative model implementations
+│   │   │   │       ├── base.py             # Abstract base class for all processors.
+│   │   │   │       ├── spandrel.py         # Implements a processor using the Spandrel model library.
+│   │   │   │       └── utils/              # Utility functions for transformative processors
+│   │   │   │           └── helpers.py      # Helper functions for transformative processors (tiled scaling, gaussian blur)
+│   │   │   └── utils.py                    # Utility functions for pipelines
+│   │   ├── transformation_manager.py       # Manages the video transformation workflow.
+│   │   └── utils/                          # Utility functions
+│   │       ├── timing.py                   # Provides timing utilities for measuring execution time.
+│   │       ├── stats.py                    # Formats processing statistics into a human-readable string.
+│   │       └── gpu.py                      # Provides GPU related utility functions.
+│   └── tests/                              # Test suite (currently empty)
 ├── weights/
 │   └── [model files]
 ├── requirements.txt
 └── setup.py
+└── README.md
 ```
 
 ## Usage
