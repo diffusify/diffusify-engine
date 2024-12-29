@@ -27,12 +27,12 @@ from .processors.generative.diffusion.hunyuan.vae.autoencoder_kl_causal_3d impor
 from .processors.generative.diffusion.hunyuan.modules.posemb_layers import get_nd_rotary_pos_embed
 from .processors.generative.diffusion.hunyuan.helpers import align_to
 
+from .processors.generative.loaders.gguf.loader import load_gguf_unet
+
 from .utils import convert_fp8_linear, load_torch_file, soft_empty_cache
 
-# TODO: support gguf
-# MODEL_PATH = "/home/ubuntu/share/diffusify-engine/weights/unet/hunyuan-video-t2v-720p-Q5_1.gguf" 
-
 MODEL_PATH = "/home/ubuntu/share/comfyui/models/diffusion_models/hunyuan-video-720-fp8.pt"
+MODEL_PATH_GGUF = "/home/ubuntu/share/diffusify-engine/weights/unet/hunyuan-video-t2v-720p-Q5_1.gguf" 
 MODEL_MAP_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/fp8_map.safetensors"
 
 VAE_PATH = "/home/ubuntu/share/comfyui/models/vae/hunyuan-video-vae-bf16.safetensors"
@@ -484,26 +484,53 @@ def get_rotary_pos_embed_hyvideo(transformer, latent_video_length, height, width
 def load_model(model_path, device, offload_device, base_dtype):
     in_channels = out_channels = 16
     factor_kwargs = {"device": device, "dtype": base_dtype}
-
-    with init_empty_weights():
-        transformer = HYVideoDiffusionTransformer(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            attention_mode='sageattn_varlen',
-            main_device=device,
-            offload_device=offload_device,
-            **HUNYUAN_VIDEO_CONFIG,
-            **factor_kwargs
-        )
-    transformer.eval()
     
-    sd = load_torch_file(model_path, device=offload_device, safe_load=True)
-
     if model_path.lower().endswith(".gguf"):
-        raise NotImplementedError
+        # Load GGUF model
+        state_dict, gguf_patcher = load_gguf_unet(
+            model_path,
+            None,  # Pass None for the model for now
+            device,
+            offload_device,
+            handle_prefix="model.diffusion_model."  # Add the appropriate prefix if needed
+        )
+
+        with init_empty_weights():
+            transformer = HYVideoDiffusionTransformer(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                attention_mode='sageattn_varlen',
+                main_device=device,
+                offload_device=offload_device,
+                gguf_patcher=gguf_patcher,  # Pass patcher to HYVideoDiffusionTransformer
+                **HUNYUAN_VIDEO_CONFIG,
+                **factor_kwargs
+            )
+        transformer.eval()
+
+        # Load the state dict into the model
+        missing_keys, unexpected_keys = transformer.load_state_dict(state_dict, strict=False)
+        print("Missing keys:", missing_keys)
+        print("Unexpected keys:", unexpected_keys)
+
+        # Now, set the model for the patcher
+        gguf_patcher.model = transformer
     else:
+        with init_empty_weights():
+            transformer = HYVideoDiffusionTransformer(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                attention_mode='sageattn_varlen',
+                main_device=device,
+                offload_device=offload_device,
+                **HUNYUAN_VIDEO_CONFIG,
+                **factor_kwargs
+            )
+        transformer.eval()
+
         dtype = torch.float8_e4m3fn
         params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
+        sd = load_torch_file(model_path, device=offload_device, safe_load=True)
         for name, param in transformer.named_parameters():
             dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
             set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
@@ -606,9 +633,9 @@ class GenerativePipeline:
         # vae = load_vae(VAE_PATH, vae_device, offload_device, "bf16")
         # latents = encode_video(vae, frames, vae_device, offload_device)
 
-        # 2. Encode prompt
-        text_encoder, text_encoder_2 = load_text_encoder("fp16", txt_encoder_device, offload_device)
-        text_embeddings = encode_text(text_encoder, text_encoder_2, txt_encoder_device, offload_device, PROMPT, NEGATIVE_PROMPT, CFG_SCALE)
+        # # 2. Encode prompt
+        # text_encoder, text_encoder_2 = load_text_encoder("fp16", txt_encoder_device, offload_device)
+        # text_embeddings = encode_text(text_encoder, text_encoder_2, txt_encoder_device, offload_device, PROMPT, NEGATIVE_PROMPT, CFG_SCALE)
 
         # # # Test
         # # new_frames = decode_video(vae, latents, vae_device, offload_device)
@@ -616,12 +643,12 @@ class GenerativePipeline:
 
         # 3. Sample
         latents = None #temp
-        pipeline = load_model(MODEL_PATH, model_device, offload_device, torch.bfloat16)        
-        new_latents = sample_video(pipeline, text_embeddings, latents, sample_device, offload_device, WIDTH, HEIGHT, NUM_FRAMES, STEPS, EMBEDDED_GUIDANCE_SCALE, CFG_SCALE, FLOW_SHIFT, SEED, DENOISE_STRENGTH)
+        pipeline = load_model(MODEL_PATH_GGUF, model_device, offload_device, torch.bfloat16)        
+        # new_latents = sample_video(pipeline, text_embeddings, latents, sample_device, offload_device, WIDTH, HEIGHT, NUM_FRAMES, STEPS, EMBEDDED_GUIDANCE_SCALE, CFG_SCALE, FLOW_SHIFT, SEED, DENOISE_STRENGTH)
 
-        # 4. Decode
-        vae = load_vae(VAE_PATH, vae_device, offload_device, "bf16")
-        new_frames = decode_video(vae, new_latents, vae_device, offload_device)
+        # # 4. Decode
+        # vae = load_vae(VAE_PATH, vae_device, offload_device, "bf16")
+        # new_frames = decode_video(vae, new_latents, vae_device, offload_device)
 
-        # 5. Combine frames and save
-        save_video_ffmpeg(new_frames, OUTPUT_VIDEO, fps=24)
+        # # 5. Combine frames and save
+        # save_video_ffmpeg(new_frames, OUTPUT_VIDEO, fps=24)

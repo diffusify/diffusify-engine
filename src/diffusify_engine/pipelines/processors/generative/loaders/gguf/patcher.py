@@ -20,24 +20,32 @@ class GGUFModelPatcher(torch.nn.Module):
         self.backup = {}
         self.load_device = load_device
         self.offload_device = offload_device
-        self.patch_on_device = False # Add this attribute
+        self.patch_on_device = False
+        self.tensor_map = {}  # Add a dictionary to store tensors
+
+    def add_tensor(self, key, tensor):
+        self.tensor_map[key] = tensor
 
     def patch_model(self, device, dtype):
+        if self.model is None:
+            raise ValueError("Model not set for patching.")
         for name, module in self.model.named_modules():
             if isinstance(module, torch.nn.Linear):
                 self.patch_linear(name, module, device, dtype)
         # Add similar logic for other layer types (e.g., Conv2d, Embedding, LayerNorm) if needed.
 
     def patch_linear(self, module_name, module, device, dtype):
-        weight = getattr(module, "weight")
-        bias = getattr(module, "bias")
+        weight_key = f"{module_name}.weight"
+        bias_key = f"{module_name}.bias"
 
-        if is_quantized(weight):
-            self.patches[f"{module_name}.weight"] = weight
+        # Retrieve weight and bias from tensor_map
+        weight = self.tensor_map.get(weight_key)
+        bias = self.tensor_map.get(bias_key)
+
+        if weight is not None:
             setattr(module, "weight", torch.nn.Parameter(weight.to(device, dtype=dtype), requires_grad=False))
 
-        if bias is not None and is_quantized(bias):
-            self.patches[f"{module_name}.bias"] = bias
+        if bias is not None:
             setattr(module, "bias", torch.nn.Parameter(bias.to(device, dtype=dtype), requires_grad=False))
 
     def get_weight(self, key, device, dtype, original_weight):

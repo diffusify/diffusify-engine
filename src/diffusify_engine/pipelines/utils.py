@@ -8,7 +8,7 @@ import torch.nn as nn
 import safetensors.torch
 from torch.nn import functional as F
 
-from .processors.generative.loaders.gguf.loader import load_gguf_unet
+
 
 def soft_empty_cache(force=False):
     if torch.cuda.is_available():
@@ -109,9 +109,6 @@ def convert_fp8_linear(module, original_dtype, fp8_map_path):
 def load_torch_file(ckpt, safe_load=False, device=torch.device("cpu")):
     if ckpt.lower().endswith(".safetensors") or ckpt.lower().endswith(".sft"):
         sd = safetensors.torch.load_file(ckpt, device=device.type)
-    elif ckpt.lower().endswith(".gguf"):
-        # TODO: add offload device configuration
-        sd = load_gguf_unet(ckpt, device=device, offload_device=torch.device("cpu"))
     else:
         if safe_load:
             if not 'weights_only' in torch.load.__code__.co_varnames:

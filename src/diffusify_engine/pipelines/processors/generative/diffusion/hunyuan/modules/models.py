@@ -20,6 +20,8 @@ from .token_refiner import SingleTokenRefiner
 from .enhance import get_feta_scores
 from .norm_layers import RMSNorm
 
+from ....loaders.gguf.patcher import GGUFModelPatcher
+
 @contextmanager
 def init_weights_on_device(device = torch.device("meta"), include_buffers :bool = False):
     
@@ -547,7 +549,8 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         device: Optional[torch.device] = None,
         main_device: Optional[torch.device] = None,
         offload_device: Optional[torch.device] = None,
-        attention_mode: str = "sdpa",
+        attention_mode: str = "sageattn_varlen",
+        gguf_patcher: Optional[GGUFModelPatcher] = None
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         
@@ -571,6 +574,9 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
 
         self.text_states_dim = text_states_dim
         self.text_states_dim_2 = text_states_dim_2
+
+        # GGUF model patcher
+        self.gguf_patcher = gguf_patcher
 
         if hidden_size % heads_num != 0:
             raise ValueError(
@@ -862,6 +868,11 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         stg_block_idx: int = -1,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+        # apply GGUF patches
+        if self.gguf_patcher is not None:
+            self.gguf_patcher.patch_model(self.main_device, self.dtype)
+
+        # prep vars
         out = {}
         img = x
         txt = text_states

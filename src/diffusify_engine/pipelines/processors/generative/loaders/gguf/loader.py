@@ -4,6 +4,7 @@ import json
 
 from .dequant import is_quantized
 from .ops import GGMLTensor
+from .patcher import GGUFModelPatcher
 
 IMG_ARCH_LIST = {"hyvid"}  # Add "hyvideo" for Hunyuan Video models
 
@@ -16,11 +17,22 @@ def get_orig_shape(reader, tensor_name):
         raise TypeError(f"Bad original shape metadata for {field_key}: Expected ARRAY of INT32, got {field.types}")
     return torch.Size(tuple(int(field.parts[part_idx][0]) for part_idx in field.data))
 
-def load_gguf_unet(model_path, device, offload_device, handle_prefix="model.diffusion_model.", return_arch=False):
+def load_gguf_unet(model_path, model, device, offload_device, handle_prefix="model.diffusion_model.", return_arch=False):
     """
     Loads a GGUF UNET model, keeping weights quantized and storing them in GGMLTensor objects.
     """
     reader = gguf.GGUFReader(model_path)
+
+    # Print all metadata keys and values
+    for key, field in reader.fields.items():
+        print(f"Key: {key}")
+        if len(field.types) == 1 and field.types[0] == gguf.GGUFValueType.STRING:
+            value = str(field.parts[field.data[-1]], encoding="utf-8")
+        elif len(field.types) == 1 and field.types[0] == gguf.GGUFValueType.ARRAY:
+            value = field.data
+        else:
+            value = field.types
+        print(f"  Value: {value}")
 
     # filter and strip prefix
     has_prefix = False
@@ -49,6 +61,9 @@ def load_gguf_unet(model_path, device, offload_device, handle_prefix="model.diff
         if arch_str not in IMG_ARCH_LIST:
             raise ValueError(f"Unexpected architecture type in GGUF file, expected one of hyvideo but got {arch_str!r}")
 
+    # Initialize GGUFModelPatcher
+    patcher = GGUFModelPatcher(model, device, offload_device)
+
     # main loading loop
     state_dict = {}
     qtype_dict = {}
@@ -62,8 +77,12 @@ def load_gguf_unet(model_path, device, offload_device, handle_prefix="model.diff
             shape = torch.Size(tuple(int(v) for v in reversed(tensor.shape)))
 
         # Store the tensor in a GGMLTensor, keeping it quantized
-        state_dict[sd_key] = GGMLTensor(tensor.data, tensor_type=tensor_type, tensor_shape=shape)
+        ggml_tensor = GGMLTensor(tensor.data, tensor_type=tensor_type, tensor_shape=shape)
+        state_dict[sd_key] = ggml_tensor
         qtype_dict[tensor_type_str] = qtype_dict.get(tensor_type_str, 0) + 1
+
+        # Add the tensor to the patcher
+        patcher.add_tensor(sd_key, ggml_tensor)
 
     # mark largest tensor for vram estimation
     qsd = {k:v for k,v in state_dict.items() if is_quantized(v)}
@@ -77,5 +96,5 @@ def load_gguf_unet(model_path, device, offload_device, handle_prefix="model.diff
         print(f" {k:30}{v:3}")
 
     if return_arch:
-        return (state_dict, arch_str)
-    return state_dict
+        return (state_dict, arch_str, patcher)
+    return state_dict, patcher
