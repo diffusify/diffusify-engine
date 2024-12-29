@@ -550,6 +550,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         attention_mode: str = "sdpa",
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
+        
         super().__init__()
 
         self.patch_size = patch_size

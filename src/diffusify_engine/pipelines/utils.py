@@ -1,11 +1,14 @@
 
 import torch
 import logging
-import safetensors.torch
 import os
+
 import torch
 import torch.nn as nn
+import safetensors.torch
 from torch.nn import functional as F
+
+from .processors.generative.loaders.gguf.loader import load_gguf_unet
 
 def soft_empty_cache(force=False):
     if torch.cuda.is_available():
@@ -66,7 +69,7 @@ def fp8_linear_forward(cls, original_dtype, input):
     if cls.weight.dtype != torch.float8_e4m3fn:
         maxval = get_fp_maxval()
         scale = torch.max(torch.abs(cls.weight.flatten())) / maxval
-        linear_weight, scale, log_scales = fp8_tensor_quant(cls.weight, scale)
+        linear_weight, scale, _ = fp8_tensor_quant(cls.weight, scale)
         linear_weight = linear_weight.to(torch.float8_e4m3fn)
         weight_dtype = linear_weight.dtype
     else:
@@ -103,11 +106,12 @@ def convert_fp8_linear(module, original_dtype, fp8_map_path):
             setattr(layer, "original_forward", original_forward)
             setattr(layer, "forward", lambda input, m=layer: fp8_linear_forward(m, original_dtype, input))
 
-def load_torch_file(ckpt, safe_load=False, device=None):
-    if device is None:
-        device = torch.device("cpu")
+def load_torch_file(ckpt, safe_load=False, device=torch.device("cpu")):
     if ckpt.lower().endswith(".safetensors") or ckpt.lower().endswith(".sft"):
         sd = safetensors.torch.load_file(ckpt, device=device.type)
+    elif ckpt.lower().endswith(".gguf"):
+        # TODO: add offload device configuration
+        sd = load_gguf_unet(ckpt, device=device, offload_device=torch.device("cpu"))
     else:
         if safe_load:
             if not 'weights_only' in torch.load.__code__.co_varnames:

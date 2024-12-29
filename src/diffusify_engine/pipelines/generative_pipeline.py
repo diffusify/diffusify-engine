@@ -26,12 +26,18 @@ from .processors.generative.diffusion.hunyuan.text_encoder.encoder import TextEn
 from .processors.generative.diffusion.hunyuan.vae.autoencoder_kl_causal_3d import AutoencoderKLCausal3D
 from .processors.generative.diffusion.hunyuan.modules.posemb_layers import get_nd_rotary_pos_embed
 from .processors.generative.diffusion.hunyuan.helpers import align_to
+
 from .utils import convert_fp8_linear, load_torch_file, soft_empty_cache
+
+# TODO: support gguf
+# MODEL_PATH = "/home/ubuntu/share/diffusify-engine/weights/unet/hunyuan-video-t2v-720p-Q5_1.gguf" 
 
 MODEL_PATH = "/home/ubuntu/share/comfyui/models/diffusion_models/hunyuan-video-720-fp8.pt"
 MODEL_MAP_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/fp8_map.safetensors"
 
 VAE_PATH = "/home/ubuntu/share/comfyui/models/vae/hunyuan-video-vae-bf16.safetensors"
+VAE_CONFIG_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/hy_vae_config.json"
+
 LLM_PATH = "/home/ubuntu/share/comfyui/models/llm/llava-llama-3-8b-text-encoder-tokenizer"
 CLIP_PATH = "/home/ubuntu/share/comfyui/models/clip/clip-vit-large-patch14"
 
@@ -59,6 +65,16 @@ SWAP_DOUBLE_BLOCKS = 4
 SWAP_SINGLE_BLOCKS = 0
 OFFLOAD_TXT_IN = False
 OFFLOAD_IMG_IN = False
+
+HUNYUAN_VIDEO_CONFIG = {
+    "mm_double_blocks_depth": 20,
+    "mm_single_blocks_depth": 40,
+    "rope_dim_list": [16, 56, 56],
+    "hidden_size": 3072,
+    "heads_num": 24,
+    "mlp_width_ratio": 4,
+    "guidance_embed": True,
+}
 
 PROMPT_TEMPLATE_ENCODE = (
     "<|start_header_id|>system<|end_header_id|>\n\nDescribe the image by detailing the color, shape, size, texture, "
@@ -151,11 +167,8 @@ def load_vae(vae_path, device, offload_device, precision):
     try:
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
 
-        script_directory = os.path.dirname(os.path.abspath(__file__))
-        vae_config = os.path.join(script_directory, "generative/diffusion/hunyuan/config/hy_vae_config.json")
-
         # Load VAE configuration
-        with open(vae_config, 'r') as f:
+        with open(VAE_CONFIG_PATH, 'r') as f:
             vae_config = json.load(f)
 
         # Load VAE state dict
@@ -472,16 +485,6 @@ def load_model(model_path, device, offload_device, base_dtype):
     in_channels = out_channels = 16
     factor_kwargs = {"device": device, "dtype": base_dtype}
 
-    HUNYUAN_VIDEO_CONFIG = {
-        "mm_double_blocks_depth": 20,
-        "mm_single_blocks_depth": 40,
-        "rope_dim_list": [16, 56, 56],
-        "hidden_size": 3072,
-        "heads_num": 24,
-        "mlp_width_ratio": 4,
-        "guidance_embed": True,
-    }
-    
     with init_empty_weights():
         transformer = HYVideoDiffusionTransformer(
             in_channels=in_channels,
@@ -492,19 +495,21 @@ def load_model(model_path, device, offload_device, base_dtype):
             **HUNYUAN_VIDEO_CONFIG,
             **factor_kwargs
         )
-
     transformer.eval()
     
     sd = load_torch_file(model_path, device=offload_device, safe_load=True)
 
-    dtype = torch.float8_e4m3fn
-    params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
-    for name, param in transformer.named_parameters():
-        dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
-        set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
+    if model_path.lower().endswith(".gguf"):
+        raise NotImplementedError
+    else:
+        dtype = torch.float8_e4m3fn
+        params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
+        for name, param in transformer.named_parameters():
+            dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
+            set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
 
-    # convert scaled
-    convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
+        # convert scaled
+        convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
 
     pipeline = HunyuanVideoPipeline(
         transformer=transformer,
@@ -582,7 +587,7 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
 class GenerativePipeline:
     def __init__(self, *args, **kwargs):
         # test
-        print(f'{args}, {kwargs}')
+        print(f'pipeline run [{args}, {kwargs}]')
 
         # Define devices for each  model in the pipeline
         # and then load them passing the device itself as the offload device

@@ -1,10 +1,11 @@
 import torch
 import gguf
+import json
 
 from .dequant import is_quantized
 from .ops import GGMLTensor
 
-IMG_ARCH_LIST = {"hyvideo"}  # Add "hyvideo" for Hunyuan Video models
+IMG_ARCH_LIST = {"hyvid"}  # Add "hyvideo" for Hunyuan Video models
 
 def get_orig_shape(reader, tensor_name):
     field_key = f"comfy.gguf.orig_shape.{tensor_name}"
@@ -17,7 +18,7 @@ def get_orig_shape(reader, tensor_name):
 
 def load_gguf_unet(model_path, device, offload_device, handle_prefix="model.diffusion_model.", return_arch=False):
     """
-    Loads a GGUF UNET model, adapting logic from gguf_sd_loader in ComfyUI-GGUF.
+    Loads a GGUF UNET model, keeping weights quantized and storing them in GGMLTensor objects.
     """
     reader = gguf.GGUFReader(model_path)
 
@@ -53,17 +54,15 @@ def load_gguf_unet(model_path, device, offload_device, handle_prefix="model.diff
     qtype_dict = {}
     for sd_key, tensor in tensors:
         tensor_name = tensor.name
-        tensor_type_str = str(tensor.tensor_type)
-        torch_tensor = torch.from_numpy(tensor.data) # mmap
+        tensor_type = tensor.tensor_type
+        tensor_type_str = str(tensor_type)
 
         shape = get_orig_shape(reader, tensor_name)
         if shape is None:
             shape = torch.Size(tuple(int(v) for v in reversed(tensor.shape)))
 
-        # add to state dict
-        if tensor.tensor_type in {gguf.GGMLQuantizationType.F32, gguf.GGMLQuantizationType.F16}:
-            torch_tensor = torch_tensor.view(*shape)
-        state_dict[sd_key] = GGMLTensor(torch_tensor, tensor_type=tensor.tensor_type, tensor_shape=shape)
+        # Store the tensor in a GGMLTensor, keeping it quantized
+        state_dict[sd_key] = GGMLTensor(tensor.data, tensor_type=tensor_type, tensor_shape=shape)
         qtype_dict[tensor_type_str] = qtype_dict.get(tensor_type_str, 0) + 1
 
     # mark largest tensor for vram estimation
