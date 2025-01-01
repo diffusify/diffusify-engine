@@ -20,11 +20,8 @@ from .token_refiner import SingleTokenRefiner
 from .enhance import get_feta_scores
 from .norm_layers import RMSNorm
 
-from ....loaders.gguf.patcher import GGUFModelPatcher
-
 @contextmanager
-def init_weights_on_device(device = torch.device("meta"), include_buffers :bool = False):
-    
+def init_weights_on_device(device=torch.device("meta"), include_buffers:bool = False):
     old_register_parameter = torch.nn.Module.register_parameter
     if include_buffers:
         old_register_buffer = torch.nn.Module.register_buffer
@@ -528,7 +525,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
     def __init__(
         self,
         patch_size: list = [1, 2, 2],
-        in_channels: int = 4,  # Should be VAE.config.latent_channels.
+        in_channels: int = 4,  # should be VAE.config.latent_channels.
         out_channels: int = None,
         hidden_size: int = 3072,
         heads_num: int = 24,
@@ -540,7 +537,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         qkv_bias: bool = True,
         qk_norm: bool = True,
         qk_norm_type: str = "rms",
-        guidance_embed: bool = False,  # For modulation.
+        guidance_embed: bool = False,  # for modulation.
         text_projection: str = "single_refiner",
         use_attention_mask: bool = True,
         text_states_dim: int = 4096,
@@ -549,8 +546,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         device: Optional[torch.device] = None,
         main_device: Optional[torch.device] = None,
         offload_device: Optional[torch.device] = None,
-        attention_mode: str = "sageattn_varlen",
-        gguf_patcher: Optional[GGUFModelPatcher] = None
+        attention_mode: str = "sageattn_varlen"
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         
@@ -574,9 +570,6 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
 
         self.text_states_dim = text_states_dim
         self.text_states_dim_2 = text_states_dim_2
-
-        # GGUF model patcher
-        self.gguf_patcher = gguf_patcher
 
         if hidden_size % heads_num != 0:
             raise ValueError(
@@ -765,7 +758,6 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
                     weight, bias = cast_bias_weight(self, x, dtype=self.dtype, device=self.device)
                     return torch.nn.functional.linear(x, weight, bias)
 
-            
             class RMSNorm(torch.nn.Module):
                 def __init__(self, module, dtype=torch.bfloat16, device="cuda"):
                     super().__init__()
@@ -805,6 +797,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
                         return torch.nn.functional.layer_norm(x, self.normalized_shape, weight, bias, self.eps)
                     else:
                         return torch.nn.functional.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        
         def replace_layer(model, dtype=torch.bfloat16, device="cuda"):
                 for name, module in model.named_children():
                     if isinstance(module, torch.nn.Linear):
@@ -868,10 +861,6 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         stg_block_idx: int = -1,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
-        # apply GGUF patches
-        if self.gguf_patcher is not None:
-            self.gguf_patcher.patch_model(self.main_device, self.dtype)
-
         # prep vars
         out = {}
         img = x
@@ -996,7 +985,6 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
 
         # ---------------------------- Final layer ------------------------------
         img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
-
         img = self.unpatchify(img, tt, th, tw)
         if return_dict:
             out["x"] = img

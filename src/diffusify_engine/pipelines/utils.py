@@ -8,8 +8,6 @@ import torch.nn as nn
 import safetensors.torch
 from torch.nn import functional as F
 
-
-
 def soft_empty_cache(force=False):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -76,7 +74,6 @@ def fp8_linear_forward(cls, original_dtype, input):
         scale = cls.fp8_scale.to(cls.weight.device)
         linear_weight = cls.weight
     #####
-
     if weight_dtype == torch.float8_e4m3fn and cls.weight.sum() != 0:
         if True or len(input.shape) == 3:
             cls_dequant = fp8_activation_dequant(linear_weight, scale, original_dtype)
@@ -129,23 +126,3 @@ def load_torch_file(ckpt, safe_load=False, device=torch.device("cpu")):
             else:
                 sd = pl_sd
     return sd
-
-# TODO: useful for future model inspection
-# def calculate_parameters(sd, prefix=""):
-#     params = 0
-#     for k in sd.keys():
-#         if k.startswith(prefix):
-#             w = sd[k]
-#             params += w.nelement()
-#     return params
-
-# TODO: useful for future model inspection
-# def weight_dtype(sd, prefix=""):
-#     dtypes = {}
-#     for k in sd.keys():
-#         if k.startswith(prefix):
-#             w = sd[k]
-#             dtypes[w.dtype] = dtypes.get(w.dtype, 0) + w.numel()
-#     if len(dtypes) == 0:
-#         return None
-#     return max(dtypes, key=dtypes.get)

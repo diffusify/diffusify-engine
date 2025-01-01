@@ -19,12 +19,13 @@
 
 import torch
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Union
 
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.utils import logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from .modules.models import HYVideoDiffusionTransformer
 from .modules.posemb_layers import get_nd_rotary_pos_embed
@@ -192,10 +193,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
     ):
         super().__init__()
 
-
-
         self.base_dtype = base_dtype
-
         self.register_modules(
             transformer=transformer,
             scheduler=scheduler
