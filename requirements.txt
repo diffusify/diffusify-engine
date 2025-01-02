@@ -1,7 +1,9 @@
-torch==2.5.1
-accelerate==1.2.1
-diffusers==0.32.0
-transformers==4.47.1
+torch
+torchvision
+torchao
+accelerate
+diffusers
+transformers
 ffmpeg-python
 tqdm
 safetensors
