@@ -9,6 +9,8 @@ import ffmpeg
 import torch
 import torchvision.transforms as T
 
+from torchao.quantization import quantize_, fpx_weight_only
+
 from PIL import Image
 from tqdm import tqdm
 
@@ -41,7 +43,7 @@ CLIP_PATH = "/home/ubuntu/share/comfyui/models/clip/clip-vit-large-patch14"
 PROMPT = "a warmly lit café at night, with hanging spherical Edison bulbs casting a soft glow over polished wooden tables and velvet booths, large floor-to-ceiling windows reveal a rainy European street outside where raindrops streak the glass and blurred headlights of passing cars create a dreamy ambiance, the camera zooms slowly on a steaming cup of coffee, next to flickering candles, and pastries."
 NEGATIVE_PROMPT = None
 INPUT_FRAMES_PATH = "/home/ubuntu/share/tests-frames"
-OUTPUT_VIDEO = "output_video.mp4"
+OUTPUT_VIDEO = "output-video-a.mp4"
 WIDTH = 960
 HEIGHT = 544
 NUM_FRAMES = 25
@@ -499,12 +501,64 @@ def load_model(model_path, device, offload_device, base_dtype, quant_dtype):
     dtype = quant_dtype
     params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
     sd = load_torch_file(model_path, device=offload_device, safe_load=True)
+
+    # for name, param in transformer.named_parameters():
+    #     dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
+    #     print(f"set module to device: {name} - {dtype_to_use}")
+    #     set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
+
+    # convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
+
+    quant_func = fpx_weight_only(3, 2)  # FP6 (3 exponent bits, 2 mantissa bits)
     for name, param in transformer.named_parameters():
         dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
-        # print(f"set module to device: {name} - {dtype_to_use}")
-        set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
+        if name in sd:
+            # Access the dtype directly from the state dict entry
+            state_dict_dtype = sd[name].dtype
+            print(f"{name}: model param dtype [{param.dtype}], sd dtype [{state_dict_dtype}]")
+        else:
+            print(f"{name} not in state dict (problem)")
+        if dtype_to_use == quant_dtype:
+            # if any(parent_name in name for parent_name in ["single_blocks", "double_blocks"]):
+            parent_name = name.rsplit('.', 1)[0]
+            module = transformer.get_submodule(parent_name)
+            if isinstance(module, torch.nn.Linear):
+                # target_layers.append((parent_name, module, name)) # Store param name as well
+                print(f"quantizing: {parent_name}")
+                module._quantized = True
+                weight_fp8 = sd[name]
+                temp_layer = torch.nn.Linear(weight_fp8.shape[1], weight_fp8.shape[0], bias=False, device=offload_device)
+                with torch.no_grad():
+                    temp_layer.weight.copy_(weight_fp8)
+                quantize_(temp_layer, quant_func)
+                weight_fp6_cpu = temp_layer.weight.detach()
+                set_module_tensor_to_device(
+                    transformer, 
+                    parent_name + ".weight", 
+                    device=device, 
+                    # dtype=base_dtype, 
+                    value=weight_fp6_cpu
+                )
+                del temp_layer
+                soft_empty_cache()
+                print(f"quantized: {parent_name}")
+        else:
+            set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
+            print(f"sent to device: {name}")
 
-    convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
+    # Example of modifying the forward method of a quantized layer:
+    for name, module in transformer.named_modules():
+        if isinstance(module, torch.nn.Linear):
+            if hasattr(module, 'weight') and hasattr(module, "_quantized") and module._quantized:  # Check if it's a quantized layer
+                module.original_forward = module.forward
+                def new_forward(self, x, *args, **kwargs):
+                    # Dequantize on-the-fly
+                    dequantized_weight = self.weight.dequantize()
+                    # Perform the linear operation with the dequantized weight
+                    return torch.nn.functional.linear(x, dequantized_weight, self.bias)
+                module.forward = new_forward.__get__(module)
+            else:
+                print(f"maybe not quantized: {name}")
 
     pipeline = HunyuanVideoPipeline(
         transformer=transformer,
