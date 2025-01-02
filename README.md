@@ -57,7 +57,14 @@ Create a virtual environment (optional but recommended), and install dependencie
 ```bash
 python -m venv venv
 source venv/bin/activate
+python -m pip install --pre torch torchvision torchao --index-url https://download.pytorch.org/whl/nightly/cu126
 pip install -r requirements.txt
+```
+
+#### Install Sage Attention (recommended)
+
+```bash
+python -m pip install -e ../sageattention/ --no-build-isolation
 ```
 
 ### 3. Install ffmpeg
