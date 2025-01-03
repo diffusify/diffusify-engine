@@ -8,6 +8,15 @@ import torch.nn as nn
 import safetensors.torch
 from torch.nn import functional as F
 
+def print_memory_usage(prefix=""):
+    """Prints the current GPU memory usage."""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / (1024 ** 3)  # Convert to GB
+        cached = torch.cuda.memory_reserved() / (1024 ** 3)  # Convert to GB
+        print(f"{prefix} Allocated Memory: {allocated:.2f} GB, Cached Memory: {cached:.2f} GB")
+    else:
+        print("CUDA not available.")
+
 def soft_empty_cache(force=False):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
