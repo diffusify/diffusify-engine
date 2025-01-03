@@ -428,7 +428,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
             callback_on_step_end_tensor_inputs = callback_on_step_end.tensor_inputs
 
-        # 0. Default height and width to unet
+        # 1. Default height and width to unet
         # height = height or self.transformer.config.sample_size * self.vae_scale_factor
         # width = width or self.transformer.config.sample_size * self.vae_scale_factor
         # to deal with lora scaling and other possible forward hooks
@@ -439,27 +439,26 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         self._cross_attention_kwargs = cross_attention_kwargs
         self._interrupt = False
         self._stg_scale = stg_scale
+
         # 2. Define call parameters
-       
         batch_size = 1
         device = self._execution_device
-
         prompt_embeds = prompt_embed_dict["prompt_embeds"]
-        negative_prompt_embeds = prompt_embed_dict["negative_prompt_embeds"]
         prompt_mask = prompt_embed_dict["attention_mask"]
-        negative_prompt_mask = prompt_embed_dict["negative_attention_mask"]
         prompt_embeds_2 = prompt_embed_dict["prompt_embeds_2"]
+        negative_prompt_embeds = prompt_embed_dict["negative_prompt_embeds"]
+        negative_prompt_mask = prompt_embed_dict["negative_attention_mask"]
         negative_prompt_embeds_2 = prompt_embed_dict["negative_prompt_embeds_2"]
 
         # For classifier free guidance, we need to do two forward passes.
         # Here we concatenate the unconditional and text embeddings into a single batch
         # to avoid doing two forward passes
-        if self.do_classifier_free_guidance:# and not self.do_spatio_temporal_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
-            if prompt_mask is not None:
-                prompt_mask = torch.cat([negative_prompt_mask, prompt_mask])
-            if prompt_embeds_2 is not None:
-                prompt_embeds_2 = torch.cat([negative_prompt_embeds_2, prompt_embeds_2])
+        # if self.do_classifier_free_guidance: # and not self.do_spatio_temporal_guidance:
+        #     prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+        #     if prompt_mask is not None:
+        #         prompt_mask = torch.cat([negative_prompt_mask, prompt_mask])
+        #     if prompt_embeds_2 is not None:
+        #         prompt_embeds_2 = torch.cat([negative_prompt_embeds_2, prompt_embeds_2])
         # elif self.do_classifier_free_guidance and self.do_spatio_temporal_guidance:
         #     prompt_embeds = torch.cat(
         #         [negative_prompt_embeds, prompt_embeds, prompt_embeds]
@@ -482,6 +481,12 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         if prompt_embeds_2 is not None:
             prompt_embeds_2 = prompt_embeds_2.to(device = device, dtype = self.base_dtype)
 
+        if self.do_classifier_free_guidance:
+            negative_prompt_embeds = negative_prompt_embeds.to(device = device, dtype = self.base_dtype)
+            negative_prompt_mask = negative_prompt_mask.to(device)
+            if negative_prompt_embeds_2 is not None:
+                negative_prompt_embeds_2 = negative_prompt_embeds_2.to(device = device, dtype = self.base_dtype)
+
         # 4. Prepare timesteps
         extra_set_timesteps_kwargs = self.prepare_extra_func_kwargs(
             self.scheduler.set_timesteps, {}
@@ -497,25 +502,15 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             **extra_set_timesteps_kwargs,
         )
 
+        # 5 Prepare rotary embeddings
         latent_video_length = (video_length - 1) // 4 + 1
-
-        # if feta_args is not None:
-        #     set_enhance_weight(feta_args["weight"])
-        #     feta_start_percent = feta_args["start_percent"]
-        #     feta_end_percent = feta_args["end_percent"]
-        #     enable_enhance(feta_args["single_blocks"], feta_args["double_blocks"])
-        # else:
-        #     disable_enhance()
-        
-        # rotary embeddings
         freqs_cos, freqs_sin = get_rotary_pos_embed(
             self.transformer, latent_video_length, height, width
         )
-        
         freqs_cos = freqs_cos.to(self.base_dtype).to(device)
         freqs_sin = freqs_sin.to(self.base_dtype).to(device)
         
-        # 5. Prepare latent variables
+        # 6. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels
         latents, timesteps = self.prepare_latents(
             batch_size * num_videos_per_prompt,
@@ -531,40 +526,17 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             denoise_strength=denoise_strength
         )
 
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_func_kwargs(
             self.scheduler.step,
             {"generator": generator, "eta": eta},
         )
 
-        # 7. Denoising loop
+        # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
 
         logger.info(f"Sampling {video_length} frames in {latents.shape[2]} latents at {width}x{height} with {len(timesteps)} inference steps")
-
-        # def denoising(latent_model_input, t_expand, input_prompt_embeds, input_prompt_mask, input_prompt_embeds_2, freqs_cos, freqs_sin, guidance_expand):
-        #     with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-        #         return self.transformer(
-        #             latent_model_input,
-        #             t_expand,
-        #             text_states=input_prompt_embeds,
-        #             text_mask=input_prompt_mask,
-        #             text_states_2=input_prompt_embeds_2,
-        #             freqs_cos=freqs_cos,
-        #             freqs_sin=freqs_sin, 
-        #             guidance=guidance_expand,
-        #             stg_block_idx=-1,
-        #             stg_mode=None,
-        #             return_dict=True,
-        #         )["x"]
-        
-        # denoising_compiled = torch.compile(
-        #     denoising,
-        #     mode="reduce-overhead",
-        #     fullgraph=False,
-        #     dynamic=False
-        # )
 
         with self.progress_bar(total=len(timesteps)) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -572,14 +544,12 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                     continue
 
                 latent_model_input = latents
-                input_prompt_embeds = prompt_embeds
-                input_prompt_mask = prompt_mask 
-                input_prompt_embeds_2 = prompt_embeds_2
 
                 cfg_enabled = False
                 stg_enabled = False
 
                 current_step_percentage = i / len(timesteps)
+
                 # if self.do_spatio_temporal_guidance:
                 #     if stg_start_percent <= current_step_percentage <= stg_end_percent:
                 #         stg_enabled = True
@@ -609,16 +579,9 @@ class HunyuanVideoPipeline(DiffusionPipeline):
 
                 if self.do_classifier_free_guidance:
                     if cfg_start_percent <= current_step_percentage <= cfg_end_percent:
-                        print("applying CFG at step", i + 1, "with strength", guidance_scale)
-                        latent_model_input = torch.cat([latents] * 2)
                         cfg_enabled = True
-                    else:
-                        input_prompt_embeds = prompt_embeds[1].unsqueeze(0)
-                        input_prompt_mask = prompt_mask[1].unsqueeze(0)
-                        input_prompt_embeds_2 = prompt_embeds_2[1].unsqueeze(0)
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-
                 t_expand = t.repeat(latent_model_input.shape[0])
 
                 if embedded_guidance_scale is not None and not cfg_enabled:
@@ -637,9 +600,9 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                     noise_pred = self.transformer(  # For an input image (129, 192, 336) (1, 256, 256)
                         latent_model_input,  # [2, 16, 33, 24, 42]
                         t_expand,  # [2]
-                        text_states=input_prompt_embeds,  # [2, 256, 4096]
-                        text_mask=input_prompt_mask,  # [2, 256]
-                        text_states_2=input_prompt_embeds_2,  # [2, 768]
+                        text_states=prompt_embeds,  # [2, 256, 4096]
+                        text_mask=prompt_mask,  # [2, 256]
+                        text_states_2=prompt_embeds_2,  # [2, 768]
                         freqs_cos=freqs_cos,  # [seqlen, head_dim]
                         freqs_sin=freqs_sin,  # [seqlen, head_dim]
                         guidance=guidance_expand,
@@ -648,29 +611,35 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                         return_dict=True,
                     )["x"]
 
-                # noise_pred = denoising_compiled(
-                #     latent_model_input,
-                #     t_expand,
-                #     input_prompt_embeds,
-                #     input_prompt_mask,
-                #     input_prompt_embeds_2,
-                #     freqs_cos,
-                #     freqs_sin,
-                #     guidance_expand,
-                # )
-
                 # perform guidance
                 if cfg_enabled:
-                    print(f'run guidance')
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + self.guidance_scale * (
-                        noise_pred_text - noise_pred_uncond
-                    )
+                    with torch.autocast(device_type="cuda", dtype=self.base_dtype, enabled=True):
+                        noise_pred_uncond = self.transformer(
+                            latent_model_input,
+                            t_expand,
+                            text_states=negative_prompt_embeds,
+                            text_mask=negative_prompt_mask,
+                            text_states_2=negative_prompt_embeds_2,
+                            freqs_cos=freqs_cos,
+                            freqs_sin=freqs_sin,
+                            guidance=guidance_expand,
+                            stg_block_idx=stg_block_idx,
+                            stg_mode=stg_mode,
+                            return_dict=True,
+                        )["x"]
+
+                    noise_pred_combine = noise_pred_uncond + self.guidance_scale * (noise_pred - noise_pred_uncond)
+
+                    # noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    # noise_pred = noise_pred_uncond + self.guidance_scale * (
+                    #     noise_pred_text - noise_pred_uncond
+                    # )
+
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
                     if (self.guidance_rescale > 0.0):
                         noise_pred = rescale_noise_cfg(
+                            noise_pred_combine,
                             noise_pred,
-                            noise_pred_text,
                             guidance_rescale=self.guidance_rescale,
                         )
 

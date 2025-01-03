@@ -41,19 +41,19 @@ VAE_CONFIG_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipe
 LLM_PATH = "/home/ubuntu/share/comfyui/models/llm/llava-llama-3-8b-text-encoder-tokenizer"
 CLIP_PATH = "/home/ubuntu/share/comfyui/models/clip/clip-vit-large-patch14"
 
-PROMPT = "a warmly lit café at night, with hanging spherical Edison bulbs casting a soft glow over polished wooden tables and velvet booths, large floor-to-ceiling windows reveal a rainy European street outside where raindrops streak the glass and blurred headlights of passing cars create a dreamy ambiance, the camera zooms slowly on a steaming cup of coffee, next to flickering candles, and pastries."
-NEGATIVE_PROMPT = None
+PROMPT = "a cinematic long shot of a warmly lit café at night, with hanging spherical Edison bulbs casting a soft glow over polished wooden tables and red vinyl booths, large floor-to-ceiling windows reveal a rainy European street outside where raindrops streak the glass, the camera focuses on a steaming cup of coffee, next to flickering candles, and pastries"
+NEGATIVE_PROMPT = "contrast"
 INPUT_FRAMES_PATH = "/home/ubuntu/share/tests-frames"
 OUTPUT_VIDEO = "output-video-a.mp4"
 WIDTH = 960
 HEIGHT = 544
 NUM_FRAMES = 73
 STEPS = 30
-CFG_SCALE = 1.0
-CFG_SCALE_START = 0.9
+CFG_SCALE = 1.5
+CFG_SCALE_START = 0.94
 CFG_SCALE_END = 1.0
 EMBEDDED_GUIDANCE_SCALE = 5.0
-FLOW_SHIFT = 5.0
+FLOW_SHIFT = 3.0
 SEED = 348273
 DENOISE_STRENGTH = 1.0
 
@@ -65,7 +65,7 @@ ENABLE_SWAP_BLOCKS = True
 ENABLE_AUTO_OFFLOAD = False
 
 SWAP_DOUBLE_BLOCKS = 20
-SWAP_SINGLE_BLOCKS = 40
+SWAP_SINGLE_BLOCKS = 20
 OFFLOAD_TXT_IN = True
 OFFLOAD_IMG_IN = True
 
@@ -502,36 +502,46 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
     
     # load state dict
     sd = load_torch_file(model_path, device=offload_device, safe_load=True)
+    named_params = transformer.named_parameters()
 
-    # get named parameters
-    named_params = list(transformer.named_parameters()) # Convert to list
+    # compile blocks
+    torch._dynamo.config.cache_size_limit = 256
+    def compile_block(block):
+        block.forward = torch.compile(block.forward, backend="inductor", mode="reduce-overhead", fullgraph=False)
+        return block
+    transformer.txt_in = compile_block(transformer.txt_in)
+    transformer.vector_in = compile_block(transformer.vector_in)
+    transformer.final_layer = compile_block(transformer.final_layer)
+    if SWAP_DOUBLE_BLOCKS == 0:
+        for i in range(len(transformer.double_blocks)):
+            transformer.double_blocks[i] = compile_block(transformer.double_blocks[i])
+    if SWAP_SINGLE_BLOCKS == 0:
+        for i in range(len(transformer.single_blocks)):
+            transformer.single_blocks[i] = compile_block(transformer.single_blocks[i])
 
     # apply fp8-scaled quant
     if quant_type == "fp8-scaled":
         quant_dtype = torch.float8_e4m3fn
-        for name, param in tqdm(named_params, desc="Loading parameters"):
+        for name, _ in named_params:
             dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else quant_dtype
             set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
-
         convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
     
     # apply fp6 quant
     elif quant_type == "fp6":
-        for name, param in tqdm(named_params, desc="Loading parameters"):
+        for name, _ in named_params:
             if name in sd:
                 if any(keyword in name for keyword in params_to_keep):
                     set_module_tensor_to_device(transformer, name, device=device, dtype=base_dtype, value=sd[name])
                 else:
                     set_module_tensor_to_device(transformer, name, device=offload_device, dtype=base_dtype, value=sd[name])
             else:
-                raise LookupError
+                raise KeyError(f"Parameter '{name}' not found in the loaded state dictionary.")
 
         quant_func = fpx_weight_only(3, 2) # FP6 (3 exponent bits, 2 mantissa bits)
-        
         def quant_filter(module: torch.nn.Module, fqn: str) -> bool:
             is_match = isinstance(module, torch.nn.Linear) and any(keyword in fqn for keyword in ["single_blocks", "double_blocks"])
             return is_match
-
         quantize_(transformer, quant_func, filter_fn=quant_filter, device=device)
 
     pipeline = HunyuanVideoPipeline(
@@ -606,7 +616,9 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
     )
 
     pipeline.transformer.to(offload_device)
+
     gc.collect()
+    soft_empty_cache()
 
     return out_latents
 
