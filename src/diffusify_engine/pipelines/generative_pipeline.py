@@ -59,13 +59,13 @@ DENOISE_STRENGTH = 1.0
 
 VAE_DTYPE = torch.bfloat16
 BASE_DTYPE = torch.bfloat16
-QUANT_TYPE = "fp5" # "fp8-scaled"
+QUANT_TYPE = "fp6" # "fp8-scaled"
 
 ENABLE_SWAP_BLOCKS = True
 ENABLE_AUTO_OFFLOAD = False
 
-SWAP_DOUBLE_BLOCKS = 16
-SWAP_SINGLE_BLOCKS = 0
+SWAP_DOUBLE_BLOCKS = 20
+SWAP_SINGLE_BLOCKS = 40
 OFFLOAD_TXT_IN = True
 OFFLOAD_IMG_IN = True
 
@@ -515,8 +515,8 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
 
         convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
     
-    # apply fp5 quant 
-    elif quant_type == "fp5":
+    # apply fp6 quant
+    elif quant_type == "fp6":
         for name, param in tqdm(named_params, desc="Loading parameters"):
             if name in sd:
                 if any(keyword in name for keyword in params_to_keep):
@@ -526,7 +526,7 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
             else:
                 raise LookupError
 
-        quant_func = fpx_weight_only(3, 1) # FP6 (3 exponent bits, 2 mantissa bits)
+        quant_func = fpx_weight_only(3, 2) # FP6 (3 exponent bits, 2 mantissa bits)
         
         def quant_filter(module: torch.nn.Module, fqn: str) -> bool:
             is_match = isinstance(module, torch.nn.Linear) and any(keyword in fqn for keyword in ["single_blocks", "double_blocks"])
