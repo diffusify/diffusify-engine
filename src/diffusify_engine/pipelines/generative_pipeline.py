@@ -31,7 +31,8 @@ from .processors.generative.diffusion.hunyuan.helpers import align_to
 
 from .utils import convert_fp8_linear, load_torch_file, soft_empty_cache
 
-MODEL_PATH = "/home/ubuntu/share/comfyui/models/diffusion_models/hunyuan-video-720-fp8.pt"
+# MODEL_PATH = "/home/ubuntu/share/comfyui/models/diffusion_models/hunyuan-video-720-fp8.pt" # fp8 scaled
+MODEL_PATH = "/home/ubuntu/share/diffusify-engine/weights/hunyuan-video/unet/hunyuan-video-720.pt" # bf16
 MODEL_MAP_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/fp8_map.safetensors"
 
 VAE_PATH = "/home/ubuntu/share/comfyui/models/vae/hunyuan-video-vae-bf16.safetensors"
@@ -46,8 +47,8 @@ INPUT_FRAMES_PATH = "/home/ubuntu/share/tests-frames"
 OUTPUT_VIDEO = "output-video-a.mp4"
 WIDTH = 960
 HEIGHT = 544
-NUM_FRAMES = 25
-STEPS = 1
+NUM_FRAMES = 73
+STEPS = 30
 CFG_SCALE = 1.0
 CFG_SCALE_START = 0.9
 CFG_SCALE_END = 1.0
@@ -58,16 +59,15 @@ DENOISE_STRENGTH = 1.0
 
 VAE_DTYPE = torch.bfloat16
 BASE_DTYPE = torch.bfloat16
-QUANT_DTYPE = torch.float8_e4m3fn
-PARAMS_TO_KEEP = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
+QUANT_TYPE = "fp5" # "fp8-scaled"
 
+ENABLE_SWAP_BLOCKS = True
 ENABLE_AUTO_OFFLOAD = False
-ENABLE_SWAP_BLOCKS = False
 
-SWAP_DOUBLE_BLOCKS = 4
+SWAP_DOUBLE_BLOCKS = 16
 SWAP_SINGLE_BLOCKS = 0
-OFFLOAD_TXT_IN = False
-OFFLOAD_IMG_IN = False
+OFFLOAD_TXT_IN = True
+OFFLOAD_IMG_IN = True
 
 HUNYUAN_VIDEO_CONFIG = {
     "mm_double_blocks_depth": 20,
@@ -482,10 +482,12 @@ def get_rotary_pos_embed_hyvideo(transformer, latent_video_length, height, width
         )
         return freqs_cos, freqs_sin
 
-def load_model(model_path, device, offload_device, base_dtype, quant_dtype):
+def load_model(model_path, device, offload_device, base_dtype, quant_type):
     in_channels = out_channels = 16
     factor_kwargs = {"device": device, "dtype": base_dtype}
+    params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
 
+    # load empty model
     with init_empty_weights():
         transformer = HYVideoDiffusionTransformer(
             in_channels=in_channels,
@@ -498,67 +500,39 @@ def load_model(model_path, device, offload_device, base_dtype, quant_dtype):
         )
     transformer.eval()
     
-    dtype = quant_dtype
-    params_to_keep = {"norm", "bias", "time_in", "vector_in", "guidance_in", "txt_in", "img_in"}
+    # load state dict
     sd = load_torch_file(model_path, device=offload_device, safe_load=True)
 
-    # for name, param in transformer.named_parameters():
-    #     dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
-    #     print(f"set module to device: {name} - {dtype_to_use}")
-    #     set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
+    # get named parameters
+    named_params = list(transformer.named_parameters()) # Convert to list
 
-    # convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
-
-    quant_func = fpx_weight_only(3, 2)  # FP6 (3 exponent bits, 2 mantissa bits)
-    for name, param in transformer.named_parameters():
-        dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else dtype
-        if name in sd:
-            # Access the dtype directly from the state dict entry
-            state_dict_dtype = sd[name].dtype
-            print(f"{name}: model param dtype [{param.dtype}], sd dtype [{state_dict_dtype}]")
-        else:
-            print(f"{name} not in state dict (problem)")
-        if dtype_to_use == quant_dtype:
-            # if any(parent_name in name for parent_name in ["single_blocks", "double_blocks"]):
-            parent_name = name.rsplit('.', 1)[0]
-            module = transformer.get_submodule(parent_name)
-            if isinstance(module, torch.nn.Linear):
-                # target_layers.append((parent_name, module, name)) # Store param name as well
-                print(f"quantizing: {parent_name}")
-                module._quantized = True
-                weight_fp8 = sd[name]
-                temp_layer = torch.nn.Linear(weight_fp8.shape[1], weight_fp8.shape[0], bias=False, device=offload_device)
-                with torch.no_grad():
-                    temp_layer.weight.copy_(weight_fp8)
-                quantize_(temp_layer, quant_func)
-                weight_fp6_cpu = temp_layer.weight.detach()
-                set_module_tensor_to_device(
-                    transformer, 
-                    parent_name + ".weight", 
-                    device=device, 
-                    # dtype=base_dtype, 
-                    value=weight_fp6_cpu
-                )
-                del temp_layer
-                soft_empty_cache()
-                print(f"quantized: {parent_name}")
-        else:
+    # apply fp8-scaled quant
+    if quant_type == "fp8-scaled":
+        quant_dtype = torch.float8_e4m3fn
+        for name, param in tqdm(named_params, desc="Loading parameters"):
+            dtype_to_use = base_dtype if any(keyword in name for keyword in params_to_keep) else quant_dtype
             set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
-            print(f"sent to device: {name}")
 
-    # Example of modifying the forward method of a quantized layer:
-    for name, module in transformer.named_modules():
-        if isinstance(module, torch.nn.Linear):
-            if hasattr(module, 'weight') and hasattr(module, "_quantized") and module._quantized:  # Check if it's a quantized layer
-                module.original_forward = module.forward
-                def new_forward(self, x, *args, **kwargs):
-                    # Dequantize on-the-fly
-                    dequantized_weight = self.weight.dequantize()
-                    # Perform the linear operation with the dequantized weight
-                    return torch.nn.functional.linear(x, dequantized_weight, self.bias)
-                module.forward = new_forward.__get__(module)
+        convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
+    
+    # apply fp5 quant 
+    elif quant_type == "fp5":
+        for name, param in tqdm(named_params, desc="Loading parameters"):
+            if name in sd:
+                if any(keyword in name for keyword in params_to_keep):
+                    set_module_tensor_to_device(transformer, name, device=device, dtype=base_dtype, value=sd[name])
+                else:
+                    set_module_tensor_to_device(transformer, name, device=offload_device, dtype=base_dtype, value=sd[name])
             else:
-                print(f"maybe not quantized: {name}")
+                raise LookupError
+
+        quant_func = fpx_weight_only(3, 1) # FP6 (3 exponent bits, 2 mantissa bits)
+        
+        def quant_filter(module: torch.nn.Module, fqn: str) -> bool:
+            is_match = isinstance(module, torch.nn.Linear) and any(keyword in fqn for keyword in ["single_blocks", "double_blocks"])
+            return is_match
+
+        quantize_(transformer, quant_func, filter_fn=quant_filter, device=device)
 
     pipeline = HunyuanVideoPipeline(
         transformer=transformer,
@@ -584,7 +558,7 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
     )
     n_tokens = freqs_cos.shape[0]
 
-    # classifier free guidance
+    # set classifier free guidance
     # and pass flow shift to scheduler
     cfg = cfg_scale
     cfg_start_percent = CFG_SCALE_START
@@ -668,7 +642,7 @@ class GenerativePipeline:
 
         # 3. Sample
         latents = None #temp
-        pipeline = load_model(MODEL_PATH, model_device, offload_device, BASE_DTYPE, QUANT_DTYPE)        
+        pipeline = load_model(MODEL_PATH, model_device, offload_device, BASE_DTYPE, QUANT_TYPE)        
         new_latents = sample_video(pipeline, text_embeddings, latents, sample_device, offload_device, WIDTH, HEIGHT, NUM_FRAMES, STEPS, EMBEDDED_GUIDANCE_SCALE, CFG_SCALE, FLOW_SHIFT, SEED, DENOISE_STRENGTH)
 
         # 4. Decode

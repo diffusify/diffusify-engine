@@ -620,7 +620,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 t_expand = t.repeat(latent_model_input.shape[0])
-                
+
                 if embedded_guidance_scale is not None and not cfg_enabled:
                     guidance_expand = (
                         torch.tensor(
