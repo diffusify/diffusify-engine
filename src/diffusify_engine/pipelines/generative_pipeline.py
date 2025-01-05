@@ -9,16 +9,12 @@ import ffmpeg
 import torch
 import torchvision.transforms as T
 
-from torchao.quantization import quantize_, fpx_weight_only
-
 from PIL import Image
 from tqdm import tqdm
-
 from typing import List
-
 from accelerate import init_empty_weights
 from accelerate.utils import set_module_tensor_to_device
-
+from torchao.quantization import quantize_, fpx_weight_only
 from diffusers.video_processor import VideoProcessor
 
 from .processors.generative.diffusion.hunyuan.modules.models import HYVideoDiffusionTransformer
@@ -26,7 +22,6 @@ from .processors.generative.diffusion.hunyuan.hunyuan_video_pipeline import Huny
 from .processors.generative.diffusion.hunyuan.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
 from .processors.generative.diffusion.hunyuan.text_encoder.encoder import TextEncoder
 from .processors.generative.diffusion.hunyuan.vae.autoencoder_kl_causal_3d import AutoencoderKLCausal3D
-from .processors.generative.diffusion.hunyuan.modules.posemb_layers import get_nd_rotary_pos_embed
 from .processors.generative.diffusion.hunyuan.helpers import align_to
 
 from .utils import convert_fp8_linear, load_torch_file, soft_empty_cache
@@ -41,19 +36,19 @@ VAE_CONFIG_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipe
 LLM_PATH = "/home/ubuntu/share/comfyui/models/llm/llava-llama-3-8b-text-encoder-tokenizer"
 CLIP_PATH = "/home/ubuntu/share/comfyui/models/clip/clip-vit-large-patch14"
 
-PROMPT = "a cinematic long shot of a warmly lit café at night, with hanging spherical Edison bulbs casting a soft glow over polished wooden tables and red vinyl booths, large floor-to-ceiling windows reveal a rainy European street outside where raindrops streak the glass, the camera focuses on a steaming cup of coffee, next to flickering candles, and pastries"
-NEGATIVE_PROMPT = "contrast"
+PROMPT = "a cinematic long shot of a warmly lit café at night, with hanging bulbs casting a soft glow over polished wooden tables and red vinyl booths, large floor-to-ceiling windows reveal a rainy European street outside where raindrops streak the glass, the camera focuses on a steaming cup of coffee, next to flickering candles, and pastries"
+NEGATIVE_PROMPT = "distorted, overexposed lighting, unnatural colors, cluttered interiors, poorly rendered pastries, overly dark or underlit areas, cold atmosphere"
 INPUT_FRAMES_PATH = "/home/ubuntu/share/tests-frames"
 OUTPUT_VIDEO = "output-video-a.mp4"
 WIDTH = 960
 HEIGHT = 544
 NUM_FRAMES = 73
 STEPS = 30
-CFG_SCALE = 1.5
+CFG_SCALE = 1.0
 CFG_SCALE_START = 0.94
 CFG_SCALE_END = 1.0
 EMBEDDED_GUIDANCE_SCALE = 5.0
-FLOW_SHIFT = 3.0
+FLOW_SHIFT = 5.0
 SEED = 348273
 DENOISE_STRENGTH = 1.0
 
@@ -434,54 +429,6 @@ def encode_text(text_encoder_1, text_encoder_2, device, offload_device, prompt, 
         "negative_attention_mask_2": negative_attention_mask_2
     }
 
-def get_rotary_pos_embed_hyvideo(transformer, latent_video_length, height, width):
-        target_ndim = 3
-        ndim = 5 - 2
-        rope_theta = 225
-        patch_size = transformer.patch_size
-        rope_dim_list = transformer.rope_dim_list
-        hidden_size = transformer.hidden_size
-        heads_num = transformer.heads_num
-        head_dim = hidden_size // heads_num
-
-        # 884
-        latents_size = [latent_video_length, height // 8, width // 8]
-
-        if isinstance(patch_size, int):
-            assert all(s % patch_size == 0 for s in latents_size), (
-                f"Latent size(last {ndim} dimensions) should be divisible by patch size({patch_size}), "
-                f"but got {latents_size}."
-            )
-            rope_sizes = [s // patch_size for s in latents_size]
-        elif isinstance(patch_size, list):
-            assert all(
-                s % patch_size[idx] == 0
-                for idx, s in enumerate(latents_size)
-            ), (
-                f"Latent size(last {ndim} dimensions) should be divisible by patch size({patch_size}), "
-                f"but got {latents_size}."
-            )
-            rope_sizes = [
-                s // patch_size[idx] for idx, s in enumerate(latents_size)
-            ]
-
-        if len(rope_sizes) != target_ndim:
-            rope_sizes = [1] * (target_ndim - len(rope_sizes)) + rope_sizes  # time axis
-
-        if rope_dim_list is None:
-            rope_dim_list = [head_dim // target_ndim for _ in range(target_ndim)]
-        assert (
-            sum(rope_dim_list) == head_dim
-        ), "sum(rope_dim_list) should equal to head_dim of attention layer"
-        freqs_cos, freqs_sin = get_nd_rotary_pos_embed(
-            rope_dim_list,
-            rope_sizes,
-            theta=rope_theta,
-            use_real=True,
-            theta_rescale_factor=1,
-        )
-        return freqs_cos, freqs_sin
-
 def load_model(model_path, device, offload_device, base_dtype, quant_type):
     in_channels = out_channels = 16
     factor_kwargs = {"device": device, "dtype": base_dtype}
@@ -492,7 +439,7 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
         transformer = HYVideoDiffusionTransformer(
             in_channels=in_channels,
             out_channels=out_channels,
-            attention_mode='sageattn_varlen',
+            attention_mode='flash_attn_varlen',
             main_device=device,
             offload_device=offload_device,
             **HUNYUAN_VIDEO_CONFIG,
@@ -563,11 +510,6 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
     target_height = align_to(height, 16)
     target_width = align_to(width, 16)
 
-    freqs_cos, freqs_sin = get_rotary_pos_embed_hyvideo(
-        pipeline.transformer, num_frames, target_height, target_width
-    )
-    n_tokens = freqs_cos.shape[0]
-
     # set classifier free guidance
     # and pass flow shift to scheduler
     cfg = cfg_scale
@@ -598,16 +540,14 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
         height=target_height,
         width=target_width,
         video_length=num_frames,
-        guidance_scale=cfg,
-        cfg_start_percent=cfg_start_percent,
-        cfg_end_percent=cfg_end_percent,
         embedded_guidance_scale=embedded_guidance_scale,
         latents=latents,
         denoise_strength=denoise_strength,
         prompt_embed_dict=text_embeddings,
         generator=generator,
-        freqs_cis=(freqs_cos, freqs_sin),
-        n_tokens=n_tokens,
+        guidance_scale=cfg,
+        cfg_start_percent=cfg_start_percent,
+        cfg_end_percent=cfg_end_percent,
         # stg_mode=None,
         # stg_block_idx=-1,
         # stg_scale=0.0,
@@ -630,11 +570,12 @@ class GenerativePipeline:
         # Define devices for each  model in the pipeline
         # and then load them passing the device itself as the offload device
         # effectively disabling offloading.
+        device = torch.device("cuda:0")
         offload_device = torch.device("cpu")
-        vae_device = torch.device("cuda:0")
-        txt_encoder_device = torch.device("cuda:0")
-        model_device = torch.device("cuda:0")
-        sample_device = torch.device("cuda:0")
+        vae_device = device
+        txt_encoder_device = device
+        model_device = device
+        sample_device = device
         
         # # 1.a. Load input video
         # frames = load_video_frames(INPUT_FRAMES_PATH)
@@ -654,7 +595,7 @@ class GenerativePipeline:
 
         # 3. Sample
         latents = None #temp
-        pipeline = load_model(MODEL_PATH, model_device, offload_device, BASE_DTYPE, QUANT_TYPE)        
+        pipeline = load_model(MODEL_PATH, model_device, offload_device, BASE_DTYPE, QUANT_TYPE)
         new_latents = sample_video(pipeline, text_embeddings, latents, sample_device, offload_device, WIDTH, HEIGHT, NUM_FRAMES, STEPS, EMBEDDED_GUIDANCE_SCALE, CFG_SCALE, FLOW_SHIFT, SEED, DENOISE_STRENGTH)
 
         # 4. Decode

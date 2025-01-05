@@ -61,7 +61,9 @@ python -m pip install --pre torch torchvision torchao --index-url https://downlo
 pip install -r requirements.txt
 ```
 
-#### Install Sage Attention (recommended)
+#### Install Sage Attention (recommended for single-gpu)
+
+Recommended attention mechanism for consumer grade gpus.
 
 ```bash
 python -m pip install -e ../sageattention/ --no-build-isolation
@@ -74,15 +76,9 @@ Ensure `ffmpeg` is installed and available in your system PATH.
 - **Ubuntu/Debian**:
 
   ```bash
-  sudo apt-get update
-  sudo apt-get install ffmpeg
+  sudo apt update
+  sudo apt install ffmpeg
   ```
-
-- **Windows**:
-
-  Download the static build from the [ffmpeg website](https://ffmpeg.org/download.html#build-windows) and add it to your PATH.
-
-**Note: This application has not been tested on Windows or MacOS. (planned for future releases)**
 
 ### 4. Set Up Model Weights
 

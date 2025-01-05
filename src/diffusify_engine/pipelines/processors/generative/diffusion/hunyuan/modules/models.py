@@ -1,24 +1,23 @@
-from typing import List, Tuple, Optional, Union, Dict
-from einops import rearrange
-
 import torch
 import torch.nn as nn
 
+from einops import rearrange
 from contextlib import contextmanager
-
 from diffusers.models import ModelMixin
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 
 from .activation_layers import get_activation_layer
 from .norm_layers import get_norm_layer
-from .embed_layers import TimestepEmbedder, PatchEmbed, TextProjection
 from .attention import attention, get_cu_seqlens
+from .enhance import get_feta_scores
 from .posemb_layers import apply_rotary_emb
+from .embed_layers import TimestepEmbedder, PatchEmbed, TextProjection
 from .mlp_layers import MLP, MLPEmbedder, FinalLayer
 from .modulate_layers import ModulateDiT, modulate, apply_gate
 from .token_refiner import SingleTokenRefiner
-from .enhance import get_feta_scores
 from .norm_layers import RMSNorm
+
+from typing import List, Tuple, Optional, Union, Dict
 
 @contextmanager
 def init_weights_on_device(device=torch.device("meta"), include_buffers:bool = False):
@@ -86,7 +85,7 @@ class MMDoubleStreamBlock(nn.Module):
         qkv_bias: bool = False,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
-        attention_mode: str = "sageattn_varlen",
+        attention_mode: str = "flash_attn_varlen",
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -310,7 +309,7 @@ class MMSingleStreamBlock(nn.Module):
         qk_scale: float = None,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
-        attention_mode: str = "sageattn_varlen",
+        attention_mode: str = "flash_attn_varlen",
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -546,7 +545,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         device: Optional[torch.device] = None,
         main_device: Optional[torch.device] = None,
         offload_device: Optional[torch.device] = None,
-        attention_mode: str = "sageattn_varlen"
+        attention_mode: str = "flash_attn_varlen"
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         
