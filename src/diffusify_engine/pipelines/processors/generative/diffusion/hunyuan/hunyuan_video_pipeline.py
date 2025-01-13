@@ -25,12 +25,11 @@ from diffusers.utils import logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 
-from typing import Any, Callable, Dict, List, Optional, Union
-
 from .modules.models import HYVideoDiffusionTransformer
 from .modules.posemb_layers import get_nd_rotary_pos_embed
-
 from .scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
+
+from typing import Any, Dict, List, Callable, Optional, Union
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -254,7 +253,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
         noise = randn_tensor(shape, generator=generator, device=device, dtype=self.base_dtype)
-        noise = noise.to(torch.float8_e4m3fn)
+        # noise = noise.to(torch.float8_e4m3fn)
         if latents is None:
             latents = noise
         # else:
@@ -355,7 +354,6 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         stg_scale: Optional[float] = 0.0,
         stg_start_percent: Optional[float] = 0.0,
         stg_end_percent: Optional[float] = 1.0,
-        context_options: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         r"""
@@ -501,15 +499,18 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             **extra_set_timesteps_kwargs,
         )
 
-        # 5 Prepare rotary embeddings
+        # 5. Calculate latent video length
         latent_video_length = (video_length - 1) // 4 + 1
+
+        # 6. Prepare rotary embeddings
         freqs_cos, freqs_sin = get_rotary_pos_embed(
             self.transformer, latent_video_length, height, width
         )
+
         freqs_cos = freqs_cos.to(self.base_dtype).to(device)
         freqs_sin = freqs_sin.to(self.base_dtype).to(device)
         
-        # 6. Prepare latent variables
+        # 7. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels
         latents, timesteps = self.prepare_latents(
             batch_size * num_videos_per_prompt,
@@ -525,7 +526,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             denoise_strength=denoise_strength
         )
 
-        # 7. Prepare extra step kwargs.
+        # 8. Prepare extra step kwargs.
         # TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_func_kwargs(
             self.scheduler.step, {
@@ -534,7 +535,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
             },
         )
 
-        # 8. Denoising loop
+        # 9. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
 

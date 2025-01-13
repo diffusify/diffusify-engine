@@ -36,18 +36,18 @@ VAE_CONFIG_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipe
 LLM_PATH = "/home/ubuntu/share/comfyui/models/llm/llava-llama-3-8b-text-encoder-tokenizer"
 CLIP_PATH = "/home/ubuntu/share/comfyui/models/clip/clip-vit-large-patch14"
 
-PROMPT = "a cinematic long shot of a warmly lit café at night, with hanging bulbs casting a soft glow over polished wooden tables and red vinyl booths, large floor-to-ceiling windows reveal a rainy European street outside where raindrops streak the glass, the camera focuses on a steaming cup of coffee, next to flickering candles, and pastries"
-NEGATIVE_PROMPT = "distorted, overexposed lighting, unnatural colors, cluttered interiors, poorly rendered pastries, overly dark or underlit areas, cold atmosphere"
+PROMPT = "golden hour of dawn, candles cast a soft glow over a wooden café table adorned with pastries, the camera slowly and steadily zooms on rising steam from a cup of coffee, large floor-to-ceiling windows reveal a rainy busy street outside"
+NEGATIVE_PROMPT = "distorted, overexposed lighting, unnatural colors, cluttered, poorly rendered pastries, dark, underlit"
 INPUT_FRAMES_PATH = "/home/ubuntu/share/tests-frames"
 OUTPUT_VIDEO = "output-video-a.mp4"
 WIDTH = 960
 HEIGHT = 544
-NUM_FRAMES = 73
+NUM_FRAMES = 75
 STEPS = 30
-CFG_SCALE = 1.0
-CFG_SCALE_START = 0.94
+CFG_SCALE = 1.5
+CFG_SCALE_START = 0.90
 CFG_SCALE_END = 1.0
-EMBEDDED_GUIDANCE_SCALE = 5.0
+EMBEDDED_GUIDANCE_SCALE = 6.0
 FLOW_SHIFT = 5.0
 SEED = 348273
 DENOISE_STRENGTH = 1.0
@@ -61,8 +61,8 @@ ENABLE_AUTO_OFFLOAD = False
 
 SWAP_DOUBLE_BLOCKS = 20
 SWAP_SINGLE_BLOCKS = 20
-OFFLOAD_TXT_IN = True
-OFFLOAD_IMG_IN = True
+OFFLOAD_TXT_IN = False
+OFFLOAD_IMG_IN = False
 
 HUNYUAN_VIDEO_CONFIG = {
     "mm_double_blocks_depth": 20,
@@ -439,7 +439,7 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
         transformer = HYVideoDiffusionTransformer(
             in_channels=in_channels,
             out_channels=out_channels,
-            attention_mode='flash_attn_varlen',
+            attention_mode='sageattn_varlen',
             main_device=device,
             offload_device=offload_device,
             **HUNYUAN_VIDEO_CONFIG,
@@ -452,19 +452,19 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
     named_params = transformer.named_parameters()
 
     # compile blocks
-    torch._dynamo.config.cache_size_limit = 256
+    torch._dynamo.config.cache_size_limit = 128
     def compile_block(block):
         block.forward = torch.compile(block.forward, backend="inductor", mode="reduce-overhead", fullgraph=False)
         return block
     transformer.txt_in = compile_block(transformer.txt_in)
     transformer.vector_in = compile_block(transformer.vector_in)
     transformer.final_layer = compile_block(transformer.final_layer)
-    if SWAP_DOUBLE_BLOCKS == 0:
-        for i in range(len(transformer.double_blocks)):
-            transformer.double_blocks[i] = compile_block(transformer.double_blocks[i])
-    if SWAP_SINGLE_BLOCKS == 0:
-        for i in range(len(transformer.single_blocks)):
-            transformer.single_blocks[i] = compile_block(transformer.single_blocks[i])
+    # if SWAP_DOUBLE_BLOCKS == 0:
+    #     for i in range(len(transformer.double_blocks)):
+    #         transformer.double_blocks[i] = compile_block(transformer.double_blocks[i])
+    # if SWAP_SINGLE_BLOCKS == 0:
+    #     for i in range(len(transformer.single_blocks)):
+    #         transformer.single_blocks[i] = compile_block(transformer.single_blocks[i])
 
     # apply fp8-scaled quant
     if quant_type == "fp8-scaled":
@@ -474,7 +474,7 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
             set_module_tensor_to_device(transformer, name, device=device, dtype=dtype_to_use, value=sd[name])
         convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
     
-    # apply fp6 quant
+    # apply fp6 quant (or fp5)
     elif quant_type == "fp6":
         for name, _ in named_params:
             if name in sd:
@@ -484,13 +484,13 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
                     set_module_tensor_to_device(transformer, name, device=offload_device, dtype=base_dtype, value=sd[name])
             else:
                 raise KeyError(f"Parameter '{name}' not found in the loaded state dictionary.")
-
         quant_func = fpx_weight_only(3, 2) # FP6 (3 exponent bits, 2 mantissa bits)
         def quant_filter(module: torch.nn.Module, fqn: str) -> bool:
             is_match = isinstance(module, torch.nn.Linear) and any(keyword in fqn for keyword in ["single_blocks", "double_blocks"])
             return is_match
         quantize_(transformer, quant_func, filter_fn=quant_filter, device=device)
 
+    # build pipeline
     pipeline = HunyuanVideoPipeline(
         transformer=transformer,
         scheduler=FlowMatchDiscreteScheduler(
@@ -498,7 +498,6 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
             reverse=True,
             solver="euler",
         ),
-        progress_bar_config=None,
         base_dtype=base_dtype
     )
 
@@ -510,11 +509,12 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
     target_height = align_to(height, 16)
     target_width = align_to(width, 16)
 
-    # set classifier free guidance
-    # and pass flow shift to scheduler
+    # classifier free guidance 
     cfg = cfg_scale
     cfg_start_percent = CFG_SCALE_START
     cfg_end_percent = CFG_SCALE_END
+    
+    # pass flow shift to scheduler
     pipeline.scheduler.shift = flow_shift
 
     if ENABLE_SWAP_BLOCKS: # enable swapping

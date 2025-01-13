@@ -74,7 +74,7 @@ def attention(
     k,
     v,
     heads,
-    mode="flash_attn_varlen",
+    mode="sageattn_varlen",
     drop_rate=0,
     attn_mask=None,
     causal=False,

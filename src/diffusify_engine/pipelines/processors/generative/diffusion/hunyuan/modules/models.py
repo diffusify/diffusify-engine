@@ -85,7 +85,7 @@ class MMDoubleStreamBlock(nn.Module):
         qkv_bias: bool = False,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
-        attention_mode: str = "flash_attn_varlen",
+        attention_mode: str = "sageattn_varlen",
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -309,7 +309,7 @@ class MMSingleStreamBlock(nn.Module):
         qk_scale: float = None,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
-        attention_mode: str = "flash_attn_varlen",
+        attention_mode: str = "sageattn_varlen",
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -401,32 +401,14 @@ class MMSingleStreamBlock(nn.Module):
             k = torch.cat((img_k, txt_k), dim=1)
 
         # feta scores
-        # feta_scores = get_feta_scores(img_q, img_k, frames)
+        feta_scores = get_feta_scores(img_q, img_k, frames)
 
         # Compute attention.
         # assert (
         #    cu_seqlens_q.shape[0] == 2 * x.shape[0] + 1
         # ), f"cu_seqlens_q.shape:{cu_seqlens_q.shape}, x.shape[0]:{x.shape[0]}"
         if stg_mode is not None:
-            if stg_mode == "STG-A":
-                attn = attention(
-                    q,
-                    k,
-                    v,
-                    heads = self.heads_num,
-                    mode=self.attention_mode,
-                    cu_seqlens_q=cu_seqlens_q,
-                    cu_seqlens_kv=cu_seqlens_kv,
-                    max_seqlen_q=max_seqlen_q,
-                    max_seqlen_kv=max_seqlen_kv,
-                    batch_size=x.shape[0],
-                    do_stg=True,
-                    txt_len=txt_len,
-                    attn_mask=attn_mask
-                )
-                output = self.linear2(torch.cat((attn, self.mlp_act(mlp)), 2))
-                return x + apply_gate(output, gate=mod_gate)
-            elif stg_mode == "STG-R":
+            if stg_mode == "STG-R":
                 attn = attention(
                     q,
                     k,
@@ -440,12 +422,15 @@ class MMSingleStreamBlock(nn.Module):
                     batch_size=x.shape[0],
                     attn_mask=attn_mask
                 )
+                attn *= feta_scores
                 # Compute activation in mlp stream, cat again and run second linear layer.
                 output = self.linear2(torch.cat((attn, self.mlp_act(mlp)), 2))
                 output = apply_gate(output, gate=mod_gate)
                 batch_size = output.shape[0]
                 output[:batch_size-1, :, :] = 0
                 return x + output
+            else:
+                raise NotImplementedError
         else:
             attn = attention(
                 q,
@@ -460,10 +445,10 @@ class MMSingleStreamBlock(nn.Module):
                 batch_size=x.shape[0],
                 attn_mask=attn_mask
             )
+            attn *= feta_scores
 
             # Compute activation in mlp stream, cat again and run second linear layer.
             output = self.linear2(torch.cat((attn, self.mlp_act(mlp)), 2))
-            # output *= feta_scores
             output = x + apply_gate(output, gate=mod_gate)
             
             return output
@@ -519,7 +504,6 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
     device: torch.device
         The device of the model.
     """
-
     @register_to_config
     def __init__(
         self,
@@ -545,7 +529,7 @@ class HYVideoDiffusionTransformer(ModelMixin, ConfigMixin):
         device: Optional[torch.device] = None,
         main_device: Optional[torch.device] = None,
         offload_device: Optional[torch.device] = None,
-        attention_mode: str = "flash_attn_varlen"
+        attention_mode: str = "sageattn_varlen"
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         
