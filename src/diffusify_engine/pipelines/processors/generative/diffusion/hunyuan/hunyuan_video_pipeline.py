@@ -253,27 +253,24 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
         noise = randn_tensor(shape, generator=generator, device=device, dtype=self.base_dtype)
-        # noise = noise.to(torch.float8_e4m3fn)
         if latents is None:
             latents = noise
-        # else:
-        #     latents = latents.to(device)
-        #     timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, denoise_strength, device)
-        #     latent_timestep = timesteps[:1]
-        #     frames_needed = noise.shape[1]
-        #     current_frames = latents.shape[1]
-            
-        #     if frames_needed > current_frames:
-        #         repeat_factor = frames_needed - current_frames
-        #         additional_frame = torch.randn((latents.size(0), repeat_factor, latents.size(2), latents.size(3), latents.size(4)), dtype=latents.dtype, device=latents.device)
-        #         latents = torch.cat((additional_frame, latents), dim=1)
-        #         self.additional_frames = repeat_factor
-        #     elif frames_needed < current_frames:
-        #         latents = latents[:, :frames_needed, :, :, :]
-        #     print(timesteps)
-        #     print(f'latents.shape {latents.shape} | noise.shape {noise.shape}')
-
-        #     latents = latents * (1 - latent_timestep / 1000) + latent_timestep / 1000 * noise
+        else:
+            latents = latents.to(device)
+            timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, denoise_strength, device)
+            latent_timestep = timesteps[:1]
+            frames_needed = noise.shape[1]
+            current_frames = latents.shape[1]
+            if frames_needed > current_frames:
+                repeat_factor = frames_needed - current_frames
+                additional_frame = torch.randn((latents.size(0), repeat_factor, latents.size(2), latents.size(3), latents.size(4)), dtype=latents.dtype, device=latents.device)
+                latents = torch.cat((additional_frame, latents), dim=1)
+                self.additional_frames = repeat_factor
+            elif frames_needed < current_frames:
+                latents = latents[:, :frames_needed, :, :, :]
+            print(timesteps)
+            print(f'latents.shape {latents.shape} | noise.shape {noise.shape}')
+            latents = latents * (1 - latent_timestep / 1000) + latent_timestep / 1000 * noise
 
         # Check existence to make it compatible with FlowMatchEulerDiscreteScheduler
         if hasattr(self.scheduler, "init_noise_sigma"):
