@@ -1,6 +1,6 @@
-torch
-torchvision
-torchao
+torch==2.5.1
+torchvision==2.5.1
+torchao==0.7.0
 accelerate
 diffusers
 transformers
