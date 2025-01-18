@@ -122,6 +122,8 @@ def load_torch_file(ckpt, safe_load=False, device=torch.device("cpu")):
                 safe_load = False
         if safe_load:
             pl_sd = torch.load(ckpt, map_location=device, weights_only=True)
+        else:
+            pl_sd = torch.load(ckpt, map_location=device)
         if "global_step" in pl_sd:
             logging.debug(f"Global Step: {pl_sd['global_step']}")
         if "state_dict" in pl_sd:

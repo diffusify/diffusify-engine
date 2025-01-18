@@ -14,7 +14,7 @@ from tqdm import tqdm
 from typing import List
 from accelerate import init_empty_weights
 from accelerate.utils import set_module_tensor_to_device
-from torchao.quantization import quantize_, fpx_weight_only
+from torchao.quantization import quantize_, fpx_weight_only, int8_weight_only
 from diffusers.video_processor import VideoProcessor
 
 from .processors.generative.diffusion.hunyuan.modules.models import HYVideoDiffusionTransformer
@@ -112,6 +112,7 @@ def load_video_frames(video_path):
             frames.append(img)
         except Exception as e:
             print(f"Warning: Could not load image {image_file}. Skipping. Error: {e}")
+    frames = [frame.resize((WIDTH, HEIGHT), Image.LANCZOS) for frame in frames]
     if not frames:
         raise ValueError("No valid images were loaded.")
     return frames
@@ -475,7 +476,7 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
         convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
     
     # apply fp6 quant (or fp5)
-    elif quant_type == "fp6":
+    elif quant_type == "int8":
         for name, _ in named_params:
             if name in sd:
                 if any(keyword in name for keyword in params_to_keep):
@@ -484,7 +485,7 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
                     set_module_tensor_to_device(transformer, name, device=offload_device, dtype=base_dtype, value=sd[name])
             else:
                 raise KeyError(f"Parameter '{name}' not found in the loaded state dictionary.")
-        quant_func = fpx_weight_only(3, 2) # FP6 (3 exponent bits, 2 mantissa bits)
+        quant_func = int8_weight_only() # fpx_weight_only(3, 2) # FP6 (3 exponent bits, 2 mantissa bits)
         def quant_filter(module: torch.nn.Module, fqn: str) -> bool:
             is_match = isinstance(module, torch.nn.Linear) and any(keyword in fqn for keyword in ["single_blocks", "double_blocks"])
             return is_match
