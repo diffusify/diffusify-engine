@@ -36,33 +36,34 @@ VAE_CONFIG_PATH = "/workspace/diffusify-engine/src/diffusify_engine/pipelines/pr
 LLM_PATH = "/workspace/comfyui/models/LLM/llava-llama-3-8b-text-encoder-tokenizer"
 CLIP_PATH = "/workspace/comfyui/models/clip/clip-vit-large-patch14"
 
-PROMPT = "cinematic camera shot holds a still, wide shot of a cozy outdoor café deck overlooking a serene, snow-covered lake surrounded by towering, pine-covered mountains. snowflakes gently fall, steam slowly rises from cups of coffee on the tables, mingling with the warm glow of candles and string lights that illuminate the wooden furniture and rustic architecture. a crackling fireplace inside the café adds a flickering, golden warmth to the ambiance. snow-dusted trees and the mirror-like surface of the lake ripple"
+PROMPT = "photorealistic wide still camera shot of a cozy outdoor café deck overlooking a serene, snow-covered lake surrounded by towering, pine-covered mountains. snowflakes gently fall, steam rises from cups of coffee on the tables, warm glow of candles and string lights illuminate the wooden furniture and rustic architecture. a crackling fireplace heat and warm the café and add a flickering golden warmth to the ambiance. mirror-like surface of the lake ripples as birds wade through the water"
 NEGATIVE_PROMPT = "cartoonish, animation, distorted, overexposed, unnatural colors, cluttered, dark, underlit"
 INPUT_FRAMES_PATH = "/workspace/tests-frames"
 OUTPUT_VIDEO = "output-video-a.mp4"
-WIDTH = 960
-HEIGHT = 544
+WIDTH = 640
+HEIGHT = 384
 NUM_FRAMES = 49
 STEPS = 30
 CFG_SCALE = 1.5
 CFG_SCALE_START = 0.90
 CFG_SCALE_END = 1.0
 EMBEDDED_GUIDANCE_SCALE = 6.0
-FLOW_SHIFT = 5.0
+FLOW_SHIFT = 10.0
 SEED = 348273
 DENOISE_STRENGTH = 1.0
 
 VAE_DTYPE = torch.bfloat16
 BASE_DTYPE = torch.bfloat16
-QUANT_TYPE = "fp6" # "fp8-scaled"
+QUANT_TYPE = "fp6" # "fp8-scaled" "int8"
 
-ENABLE_SWAP_BLOCKS = True
-ENABLE_AUTO_OFFLOAD = False
+ENABLE_TEA_CACHE = True
+TEA_CACHE_AMOUNT = 0.2
 
-SWAP_DOUBLE_BLOCKS = 10
+ENABLE_SWAP_BLOCKS = False
+SWAP_DOUBLE_BLOCKS = 0
 SWAP_SINGLE_BLOCKS = 0
-OFFLOAD_TXT_IN = True
-OFFLOAD_IMG_IN = True
+OFFLOAD_TXT_IN = False
+OFFLOAD_IMG_IN = False
 
 HUNYUAN_VIDEO_CONFIG = {
     "mm_double_blocks_depth": 20,
@@ -521,6 +522,23 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
     # pass flow shift to scheduler
     pipeline.scheduler.shift = flow_shift
 
+    if ENABLE_TEA_CACHE:
+        # Check if dimensions have changed since last run
+        if (not hasattr(pipeline.transformer, 'last_dimensions') or
+                pipeline.transformer.last_dimensions != (height, width, num_frames) or
+                not hasattr(pipeline.transformer, 'last_frame_count') or
+                pipeline.transformer.last_frame_count != num_frames):
+            # Reset TeaCache state on dimension change
+            pipeline.transformer.cnt = 0
+            pipeline.transformer.accumulated_rel_l1_distance = 0
+            pipeline.transformer.enable_teacache = True
+            pipeline.transformer.previous_modulated_input = None
+            pipeline.transformer.previous_residual = None
+            pipeline.transformer.last_dimensions = (height, width, num_frames)
+            pipeline.transformer.last_frame_count = num_frames
+            pipeline.transformer.num_steps = steps
+            pipeline.transformer.rel_l1_thresh = TEA_CACHE_AMOUNT # cache amount
+
     if ENABLE_SWAP_BLOCKS: # enable swapping
         for name, param in pipeline.transformer.named_parameters():
             if "single" not in name and "double" not in name:
@@ -531,8 +549,6 @@ def sample_video(pipeline, text_embeddings, latents, device, offload_device, wid
             offload_txt_in = OFFLOAD_TXT_IN,
             offload_img_in = OFFLOAD_IMG_IN,
         )
-    elif ENABLE_AUTO_OFFLOAD: # enable auto offload
-        pipeline.transformer.enable_auto_offload()
 
     gc.collect()
     soft_empty_cache()
@@ -607,4 +623,4 @@ class GenerativePipeline:
         new_frames = decode_video(vae, new_latents, vae_device, offload_device)
 
         # 5. Combine frames and save
-        save_video_ffmpeg(new_frames, OUTPUT_VIDEO, fps=24)
+        save_video_ffmpeg(new_frames, OUTPUT_VIDEO, fps=12)
