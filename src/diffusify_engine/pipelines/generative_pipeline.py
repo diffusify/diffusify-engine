@@ -27,22 +27,22 @@ from .processors.generative.diffusion.hunyuan.helpers import align_to
 from .utils import convert_fp8_linear, load_torch_file, soft_empty_cache
 
 # MODEL_PATH = "/home/ubuntu/share/comfyui/models/diffusion_models/hunyuan-video-720-fp8.pt" # fp8 scaled
-MODEL_PATH = "/home/ubuntu/share/diffusify-engine/weights/hunyuan-video/unet/hunyuan-video-720.pt" # bf16
-MODEL_MAP_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/fp8_map.safetensors"
+MODEL_PATH = "/workspace/diffusify-engine/weights/hunyuan-video/unet/hunyuan-video-720.pt" # bf16
+MODEL_MAP_PATH = "/workspace/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/fp8_map.safetensors"
 
-VAE_PATH = "/home/ubuntu/share/comfyui/models/vae/hunyuan-video-vae-bf16.safetensors"
-VAE_CONFIG_PATH = "/home/ubuntu/share/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/hy_vae_config.json"
+VAE_PATH = "/workspace/comfyui/models/vae/hunyuan-video-vae-bf16.safetensors"
+VAE_CONFIG_PATH = "/workspace/diffusify-engine/src/diffusify_engine/pipelines/processors/generative/diffusion/hunyuan/config/hy_vae_config.json"
 
-LLM_PATH = "/home/ubuntu/share/comfyui/models/llm/llava-llama-3-8b-text-encoder-tokenizer"
-CLIP_PATH = "/home/ubuntu/share/comfyui/models/clip/clip-vit-large-patch14"
+LLM_PATH = "/workspace/comfyui/models/LLM/llava-llama-3-8b-text-encoder-tokenizer"
+CLIP_PATH = "/workspace/comfyui/models/clip/clip-vit-large-patch14"
 
-PROMPT = "golden hour of dawn, candles cast a soft glow over a wooden café table adorned with pastries, the camera slowly and steadily zooms on rising steam from a cup of coffee, large floor-to-ceiling windows reveal a rainy busy street outside"
-NEGATIVE_PROMPT = "distorted, overexposed lighting, unnatural colors, cluttered, poorly rendered pastries, dark, underlit"
-INPUT_FRAMES_PATH = "/home/ubuntu/share/tests-frames"
+PROMPT = "cinematic camera shot holds a still, wide shot of a cozy outdoor café deck overlooking a serene, snow-covered lake surrounded by towering, pine-covered mountains. snowflakes gently fall, steam slowly rises from cups of coffee on the tables, mingling with the warm glow of candles and string lights that illuminate the wooden furniture and rustic architecture. a crackling fireplace inside the café adds a flickering, golden warmth to the ambiance. snow-dusted trees and the mirror-like surface of the lake ripple"
+NEGATIVE_PROMPT = "cartoonish, animation, distorted, overexposed, unnatural colors, cluttered, dark, underlit"
+INPUT_FRAMES_PATH = "/workspace/tests-frames"
 OUTPUT_VIDEO = "output-video-a.mp4"
 WIDTH = 960
 HEIGHT = 544
-NUM_FRAMES = 75
+NUM_FRAMES = 49
 STEPS = 30
 CFG_SCALE = 1.5
 CFG_SCALE_START = 0.90
@@ -59,10 +59,10 @@ QUANT_TYPE = "fp6" # "fp8-scaled"
 ENABLE_SWAP_BLOCKS = True
 ENABLE_AUTO_OFFLOAD = False
 
-SWAP_DOUBLE_BLOCKS = 20
-SWAP_SINGLE_BLOCKS = 20
-OFFLOAD_TXT_IN = False
-OFFLOAD_IMG_IN = False
+SWAP_DOUBLE_BLOCKS = 10
+SWAP_SINGLE_BLOCKS = 0
+OFFLOAD_TXT_IN = True
+OFFLOAD_IMG_IN = True
 
 HUNYUAN_VIDEO_CONFIG = {
     "mm_double_blocks_depth": 20,
@@ -476,7 +476,7 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
         convert_fp8_linear(transformer, base_dtype, MODEL_MAP_PATH)
     
     # apply fp6 quant (or fp5)
-    elif quant_type == "int8":
+    elif quant_type == "int8" or quant_type == "fp6":
         for name, _ in named_params:
             if name in sd:
                 if any(keyword in name for keyword in params_to_keep):
@@ -485,7 +485,10 @@ def load_model(model_path, device, offload_device, base_dtype, quant_type):
                     set_module_tensor_to_device(transformer, name, device=offload_device, dtype=base_dtype, value=sd[name])
             else:
                 raise KeyError(f"Parameter '{name}' not found in the loaded state dictionary.")
-        quant_func = int8_weight_only() # fpx_weight_only(3, 2) # FP6 (3 exponent bits, 2 mantissa bits)
+        if quant_type == "int8":
+            quant_func = int8_weight_only()
+        if quant_type == "fp6":
+            quant_func = fpx_weight_only(3, 2) # FP6 (3 exponent bits, 2 mantissa bits)
         def quant_filter(module: torch.nn.Module, fqn: str) -> bool:
             is_match = isinstance(module, torch.nn.Linear) and any(keyword in fqn for keyword in ["single_blocks", "double_blocks"])
             return is_match
